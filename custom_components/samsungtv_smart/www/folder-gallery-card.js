@@ -36,6 +36,8 @@ class FolderGalleryCard extends HTMLElement {
     this._dtIndex = -1;
     this._dtTime = 0;
     this._dtTimer = null;
+    // Lazy-load observer for the gallery thumbnails.
+    this._imgObserver = null;
   }
 
   static get properties() {
@@ -550,8 +552,8 @@ class FolderGalleryCard extends HTMLElement {
       <div class="gallery-grid">
         ${this._images.map((img, index) => `
           <div class="gallery-item" data-index="${index}" data-path="${img.path}" data-content-id="${img.content_id || ''}">
-            <img src="${img.path}" alt="${img.name}" loading="lazy" class="loading"
-                 onerror="this.classList.add('error')" 
+            <img data-src="${img.path}" alt="${img.name}" decoding="async" class="loading"
+                 onerror="this.classList.add('error')"
                  onload="this.classList.remove('loading')">
             ${this._config.show_filename ? `
               <div class="image-overlay">
@@ -562,6 +564,14 @@ class FolderGalleryCard extends HTMLElement {
         `).join('')}
       </div>
     `;
+
+    // Lazy load/unload via IntersectionObserver. A folder of full-size
+    // originals (several MB each, many of them) overwhelmed the browser when
+    // every <img> was given its src up front — it downloaded and decoded the
+    // whole set at once. Instead we only set src on images near the viewport,
+    // and DROP src again once they scroll far away, so the number of decoded
+    // bitmaps held in memory stays bounded regardless of folder size.
+    this._setupImageObserver(container);
 
     // Add click + long-press handlers.
     // Long-press is detected with a pointer timer rather than the `contextmenu`
@@ -657,6 +667,59 @@ class FolderGalleryCard extends HTMLElement {
       // doesn't interrupt the hold.
       item.addEventListener('contextmenu', (e) => e.preventDefault());
     });
+  }
+
+  _setupImageObserver(container) {
+    // Disconnect any observer from a previous render before rebuilding.
+    if (this._imgObserver) {
+      this._imgObserver.disconnect();
+    }
+
+    const imgs = container.querySelectorAll('.gallery-item img[data-src]');
+    if (!imgs.length) {
+      return;
+    }
+
+    // No IntersectionObserver (very old webview): fall back to loading all.
+    if (typeof IntersectionObserver === 'undefined') {
+      imgs.forEach((img) => {
+        if (img.dataset.src) {
+          img.src = img.dataset.src;
+        }
+      });
+      return;
+    }
+
+    this._imgObserver = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const img = entry.target;
+          if (entry.isIntersecting) {
+            // Approaching the viewport → load it.
+            if (!img.getAttribute('src') && img.dataset.src) {
+              img.classList.add('loading');
+              img.src = img.dataset.src;
+            }
+          } else if (img.getAttribute('src')) {
+            // Far offscreen again → drop the bitmap to free memory. The
+            // placeholder ('loading') keeps the tile sized so layout is stable.
+            img.removeAttribute('src');
+            img.classList.add('loading');
+          }
+        }
+      },
+      // Preload a bit before the tile is actually visible for smooth scrolling.
+      { root: null, rootMargin: "300px 0px", threshold: 0.01 }
+    );
+
+    imgs.forEach((img) => this._imgObserver.observe(img));
+  }
+
+  disconnectedCallback() {
+    if (this._imgObserver) {
+      this._imgObserver.disconnect();
+      this._imgObserver = null;
+    }
   }
 
   setupLightbox() {
