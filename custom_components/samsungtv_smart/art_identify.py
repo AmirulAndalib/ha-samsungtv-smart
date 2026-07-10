@@ -83,6 +83,11 @@ _GEMINI_URL_TMPL = (
 
 _CACHE_STORE_VERSION = 1
 _HTTP_TIMEOUT = 45  # seconds per external call
+# Output token budget for the confirmation reply. Must fit the whole JSON —
+# title + three prose fields in every LANGS language — or the reply is
+# truncated and fails to parse. 700 was fine single-language; 5 languages need
+# far more headroom.
+_LLM_MAX_TOKENS = 3000
 
 # Languages the metadata is produced in, so each viewer can be shown the
 # artwork description in their own UI language (the Lovelace card picks by the
@@ -289,7 +294,7 @@ async def async_llm_confirm(
         }
         body = {
             "model": model,
-            "max_tokens": 700,
+            "max_tokens": _LLM_MAX_TOKENS,
             "messages": [
                 {
                     "role": "user",
@@ -320,7 +325,7 @@ async def async_llm_confirm(
         # already constrain the answer, so determinism isn't needed here.
         body = {
             "model": model,
-            "max_completion_tokens": 700,
+            "max_completion_tokens": _LLM_MAX_TOKENS,
             "response_format": {"type": "json_object"},
             "messages": [
                 {
@@ -354,7 +359,7 @@ async def async_llm_confirm(
             ],
             "generationConfig": {
                 "temperature": 0.1,
-                "maxOutputTokens": 700,
+                "maxOutputTokens": _LLM_MAX_TOKENS,
                 "response_mime_type": "application/json",
             },
         }
