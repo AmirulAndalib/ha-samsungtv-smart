@@ -3446,6 +3446,51 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             self.hass, entry, content_id, cache=cache, force=force
         )
 
+    async def _ensure_tv_awake_for_art(self) -> bool:
+        """Ensure the TV is powered, WITHOUT forcing it into Art Mode.
+
+        Uploading artwork only needs the art app reachable, not the panel
+        showing art — the SmartThings app uploads happily while the TV is on
+        a normal input. Yanking the picture away from whatever the user is
+        watching just to store a file is the wrong trade-off, so operations
+        that merely write to the art library use this instead of
+        ``_ensure_art_mode_ready``.
+
+        A Frame in Art Mode reports media_player state OFF, so art_mode_status
+        is checked first: that is "powered and art app alive". Otherwise any
+        non-OFF state means the TV is on in normal viewing and the art channel
+        answers there too. Only a genuinely powered-off TV is woken up — and
+        even then Art Mode is not forced; the TV returns to whatever state it
+        was left in.
+        """
+        if self.extra_state_attributes.get(ATTR_ART_MODE_STATUS) == STATE_ON:
+            self._log.debug("Frame Art: TV in Art Mode, ready")
+            return True
+
+        if self.state != MediaPlayerState.OFF:
+            self._log.debug("Frame Art: TV on (normal viewing), ready")
+            return True
+
+        # Genuinely off: power it on, then leave the mode alone.
+        ip_client = self._get_ip_control_client()
+        if ip_client is not None:
+            try:
+                if await ip_client.async_get_power_state() == "powerOff":
+                    await ip_client.async_power_on()
+                    await asyncio.sleep(3)
+                self._log.debug("Frame Art: TV powered on via IP Control")
+                return True
+            except SamsungIPControlError as ex:
+                self._log.debug(
+                    "Frame Art: IP Control power-on failed (%s); "
+                    "falling back to Art Mode activation",
+                    ex,
+                )
+
+        # No IP Control (or it failed): the WebSocket path can only wake a
+        # Frame into Art Mode, so fall back to the full helper.
+        return await self._ensure_art_mode_ready()
+
     async def _ensure_art_mode_ready(self) -> bool:
         """Ensure TV is on and in Art Mode. Turn it on and activate Art Mode if needed.
 
@@ -3626,8 +3671,8 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             self._log.warning("Frame TV art mode is not supported on this device")
             return {"error": "Frame TV not supported"}
 
-        # Ensure TV is on and in Art Mode
-        if not await self._ensure_art_mode_ready():
+        # Only needs the art app reachable — do not force Art Mode on.
+        if not await self._ensure_tv_awake_for_art():
             return {"error": "Failed to turn on TV"}
 
         try:
@@ -3706,7 +3751,8 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
 
         if not await self._ensure_frame_tv_check():
             return {"error": "Frame TV not supported"}
-        if not await self._ensure_art_mode_ready():
+        # Writing to the art library does not require the panel to show art.
+        if not await self._ensure_tv_awake_for_art():
             return {"error": "Failed to turn on TV"}
 
         from .api._upload_sidecar import list_images
