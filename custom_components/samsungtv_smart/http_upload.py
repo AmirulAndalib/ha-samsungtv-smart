@@ -27,6 +27,13 @@ _LOGGER = logging.getLogger(__name__)
 # Guard against absurd uploads (Frame art is a few MB at most).
 _MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
+# Uploads are fitted inside this box. 4K Frames display 3840x2160 and gain
+# nothing from more pixels, while oversized images (a 4259px-wide scan, a
+# 48MP phone shot) are a decode failure on the TV: it stores the entry and
+# then shows a grey rectangle. Aspect ratio is preserved; smaller images are
+# left alone.
+_MAX_SIZE = (3840, 2160)
+
 
 class SamsungArtUploadView(HomeAssistantView):
     """POST an image and push it to a Frame TV entity (auth required)."""
@@ -121,9 +128,11 @@ def _prepare_image(data: bytes) -> tuple[bytes, str]:
     Encoding stays deliberately ordinary — ``quality=92`` with standard 4:2:0
     chroma — because that is what cameras, phones and the SmartThings app emit,
     and it is what the TV reliably accepts; maximal settings (quality=100,
-    4:4:4) were refused by the Frame. Resolution is left untouched, so the only
-    fidelity cost is a single re-quantisation. EXIF orientation is applied
-    before the metadata is dropped, so portrait photos are not sent sideways.
+    4:4:4) were refused by the Frame. Images larger than the panel are fitted
+    inside 3840x2160 (aspect preserved) — beyond that the extra pixels buy
+    nothing on screen and are themselves a decode failure. EXIF orientation is
+    applied before the metadata is dropped, so portrait photos are not sent
+    sideways.
 
     Pillow (and the optional ``pillow-heif`` opener for iPhone HEIC) are
     imported lazily so a missing codec never breaks importing this module.
@@ -141,6 +150,8 @@ def _prepare_image(data: bytes) -> tuple[bytes, str]:
     with Image.open(io.BytesIO(data)) as img:
         img = ImageOps.exif_transpose(img)  # honour rotation, then drop EXIF
         rgb = img.convert("RGB")
+        if rgb.width > _MAX_SIZE[0] or rgb.height > _MAX_SIZE[1]:
+            rgb.thumbnail(_MAX_SIZE, Image.LANCZOS)
         out = io.BytesIO()
         rgb.save(
             out,

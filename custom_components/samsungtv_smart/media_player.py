@@ -3471,13 +3471,27 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             self._log.debug("Frame Art: TV on (normal viewing), ready")
             return True
 
+        # state OFF is ambiguous on a Frame — Art Mode reports OFF too, and the
+        # art_mode_status attribute can be stale or unknown. Confirm with the
+        # TV itself before waking anything: powering on a panel that is already
+        # running toggles it out of Art Mode onto the last input (HDMI).
+        if self._art_api is not None:
+            try:
+                if await self._art_api.on():
+                    self._log.debug("Frame Art: TV reports powered, ready")
+                    return True
+            except Exception:  # noqa: BLE001 - best effort probe
+                pass
+
         # Genuinely off: power it on, then leave the mode alone.
         ip_client = self._get_ip_control_client()
         if ip_client is not None:
             try:
-                if await ip_client.async_get_power_state() == "powerOff":
-                    await ip_client.async_power_on()
-                    await asyncio.sleep(3)
+                if await ip_client.async_get_power_state() != "powerOff":
+                    self._log.debug("Frame Art: IP Control reports powered, ready")
+                    return True
+                await ip_client.async_power_on()
+                await asyncio.sleep(3)
                 self._log.debug("Frame Art: TV powered on via IP Control")
                 return True
             except SamsungIPControlError as ex:
