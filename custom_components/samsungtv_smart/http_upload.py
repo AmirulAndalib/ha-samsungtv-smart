@@ -111,18 +111,19 @@ class SamsungArtUploadView(HomeAssistantView):
 def _prepare_image(data: bytes) -> tuple[bytes, str]:
     """Re-encode any image into a plain JPEG the Frame is happy to decode.
 
-    Every upload is normalised, not just the exotic ones. The TV is far
-    pickier than a browser: progressive scans, CMYK, 16-bit or paletted
-    samples and oversized EXIF blobs are all things it may store and then
-    fail to decode — the artwork ends up as a grey rectangle and the TV never
-    emits ``image_added``. Re-encoding once, here, removes that whole class of
+    Every upload is normalised, not just the exotic ones. The TV is far pickier
+    than a browser: progressive scans, CMYK, 16-bit or paletted samples and
+    oversized EXIF blobs are all things it may store and then fail to decode —
+    the artwork ends up as a grey rectangle and the TV never emits
+    ``image_added``. Re-encoding once, here, removes that whole class of
     surprises (and is what the SmartThings app does before sending).
 
-    Quality is deliberately maximal: ``quality=100`` with **4:4:4** chroma (no
-    subsampling) and the original resolution untouched, so normalising costs
-    fidelity only through a single re-quantisation, not through downscaling or
-    chroma decimation. EXIF orientation is applied before the metadata is
-    dropped, so portrait photos are not sent sideways.
+    Encoding stays deliberately ordinary — ``quality=92`` with standard 4:2:0
+    chroma — because that is what cameras, phones and the SmartThings app emit,
+    and it is what the TV reliably accepts; maximal settings (quality=100,
+    4:4:4) were refused by the Frame. Resolution is left untouched, so the only
+    fidelity cost is a single re-quantisation. EXIF orientation is applied
+    before the metadata is dropped, so portrait photos are not sent sideways.
 
     Pillow (and the optional ``pillow-heif`` opener for iPhone HEIC) are
     imported lazily so a missing codec never breaks importing this module.
@@ -144,8 +145,8 @@ def _prepare_image(data: bytes) -> tuple[bytes, str]:
         rgb.save(
             out,
             format="JPEG",
-            quality=100,
-            subsampling=0,  # 4:4:4 — keep full chroma resolution
+            quality=92,
+            subsampling="4:2:0",  # what every camera/phone emits; TV-safe
             progressive=False,  # baseline only: TVs choke on progressive
             optimize=False,
         )
