@@ -96,6 +96,10 @@ ART_WS_HEARTBEAT = 20
 _KEEPALIVE_INTERVAL = 60.0  # idle ping cadence: keep a quiet-but-live WS open
 _MAX_BACKOFF = 60.0  # hard cap on the per-attempt reconnect delay (seconds)
 
+# Upload d2d socket: write the image in chunks of this size, draining after
+# each, so data really hits the wire before the socket is closed (see upload()).
+_UPLOAD_CHUNK_SIZE = 64 * 1024
+
 # Circuit breaker: consecutive request timeouts on a live socket before the
 # channel is declared wedged (TV art APP dead while its network stack keeps
 # the WS open and answering PINGs — heartbeat can't catch that) and the socket
@@ -2047,8 +2051,16 @@ class SamsungTVAsyncArt:
                 writer.write(header.encode("ascii"))
 
                 self._log.debug("Art API: Sending file data (%d bytes)", file_size)
-                writer.write(file)
-                await writer.drain()
+                # Send in chunks, draining after each one, so the bytes are
+                # actually flushed to the wire as we go. Writing the whole file
+                # in one call only fills the asyncio buffer ("sent" in ms), and
+                # the immediate TLS close below then races with the buffered
+                # data — 2024 Frames (LS03D) end up with a truncated image:
+                # entry created, grey thumbnail, and no image_added event.
+                # Matches the reference implementation (samsung-tv-ws-api).
+                for pos in range(0, file_size, _UPLOAD_CHUNK_SIZE):
+                    writer.write(file[pos : pos + _UPLOAD_CHUNK_SIZE])
+                    await writer.drain()
                 self._log.debug("Art API: Data sent successfully")
             finally:
                 writer.close()
