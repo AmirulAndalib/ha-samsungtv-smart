@@ -109,27 +109,25 @@ class SamsungArtUploadView(HomeAssistantView):
 
 
 def _prepare_image(data: bytes) -> tuple[bytes, str]:
-    """Return (bytes, suffix) the Frame will accept, converting only if needed.
+    """Re-encode any image into a plain JPEG the Frame is happy to decode.
 
-    JPEG/PNG bytes are passed through **untouched** — same as the
-    ``art_upload`` service, which uploads the file as-is: the TV accepts them
-    and there is no reason to recompress a picture the user chose. The magic
-    bytes are checked rather than the name/content-type, so a HEIC file
-    misnamed ``.jpeg`` (what iPhones hand browsers) is not trusted.
+    Every upload is normalised, not just the exotic ones. The TV is far
+    pickier than a browser: progressive scans, CMYK, 16-bit or paletted
+    samples and oversized EXIF blobs are all things it may store and then
+    fail to decode — the artwork ends up as a grey rectangle and the TV never
+    emits ``image_added``. Re-encoding once, here, removes that whole class of
+    surprises (and is what the SmartThings app does before sending).
 
-    Anything else — notably iPhone HEIC/HEIF, which The Frame rejects outright
-    — is decoded and re-encoded to a baseline JPEG. EXIF orientation is applied
-    before the metadata is dropped, so a portrait photo is not sent sideways.
+    Quality is deliberately maximal: ``quality=100`` with **4:4:4** chroma (no
+    subsampling) and the original resolution untouched, so normalising costs
+    fidelity only through a single re-quantisation, not through downscaling or
+    chroma decimation. EXIF orientation is applied before the metadata is
+    dropped, so portrait photos are not sent sideways.
 
-    Pillow (and the optional ``pillow-heif`` opener for HEIC) are imported
-    lazily so a missing codec never breaks importing this module. Runs in an
-    executor (blocking PIL).
+    Pillow (and the optional ``pillow-heif`` opener for iPhone HEIC) are
+    imported lazily so a missing codec never breaks importing this module.
+    Runs in an executor (blocking PIL).
     """
-    if data[:3] == b"\xff\xd8\xff":  # JPEG SOI
-        return data, ".jpg"
-    if data[:8] == b"\x89PNG\r\n\x1a\n":  # PNG signature
-        return data, ".png"
-
     from PIL import Image, ImageOps  # noqa: PLC0415 - lazy: keep PIL out of import
 
     try:
@@ -143,7 +141,14 @@ def _prepare_image(data: bytes) -> tuple[bytes, str]:
         img = ImageOps.exif_transpose(img)  # honour rotation, then drop EXIF
         rgb = img.convert("RGB")
         out = io.BytesIO()
-        rgb.save(out, format="JPEG", quality=92, progressive=False)
+        rgb.save(
+            out,
+            format="JPEG",
+            quality=100,
+            subsampling=0,  # 4:4:4 — keep full chroma resolution
+            progressive=False,  # baseline only: TVs choke on progressive
+            optimize=False,
+        )
     return out.getvalue(), ".jpg"
 
 
