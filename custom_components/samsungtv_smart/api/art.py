@@ -210,6 +210,9 @@ class SamsungTVAsyncArt:
         # Circuit breaker: consecutive request timeouts on a live socket
         # (zombie art app detection — see _note_request_timeout).
         self._timeout_streak = 0
+        # Suspends that breaker while an upload waits for image_added, so
+        # unrelated thumbnail timeouts can't tear the socket down mid-upload.
+        self._upload_in_progress = False
 
         # Connection lock to prevent concurrent connection attempts (v6.3.5)
         self._connection_lock = asyncio.Lock()
@@ -872,7 +875,17 @@ class SamsungTVAsyncArt:
         Occasional single timeouts (e.g. the capability probes on TVs that
         don't implement a request) don't trip it: interleaved successful
         requests keep resetting the streak.
+
+        An upload in flight suspends the breaker entirely. On TVs whose
+        get_thumbnail never answers (2024 Frames), the thumbnail coordinator
+        piles up timeouts *while* an upload waits for ``image_added``; tripping
+        here would force-close the socket, cancel that pending wait and report
+        a bogus "no content_id returned" for an upload the TV was still
+        processing. The channel is demonstrably alive during an upload anyway —
+        the TV just answered send_image and accepted the d2d transfer.
         """
+        if self._upload_in_progress:
+            return
         self._timeout_streak += 1
         if self._timeout_streak < ART_WS_TIMEOUT_TRIP:
             return
@@ -1966,6 +1979,32 @@ class SamsungTVAsyncArt:
         self._log.debug(
             "Art API: Sending send_image request, request_id=%s", request_id
         )
+
+        # Hold the timeout circuit breaker off for the whole transfer: on TVs
+        # whose get_thumbnail never answers, the coordinator's timeouts would
+        # otherwise trip it and force-close the socket while we wait for
+        # image_added, killing a perfectly good upload.
+        self._upload_in_progress = True
+        try:
+            return await self._upload_locked(
+                file, matte, portrait_matte, file_type, date, timeout, request_id
+            )
+        finally:
+            self._upload_in_progress = False
+            self._timeout_streak = 0
+
+    async def _upload_locked(  # noqa: PLR0913 - mirrors upload()'s parameters
+        self,
+        file: bytes,
+        matte: str,
+        portrait_matte: str,
+        file_type: str,
+        date: str,
+        timeout: int,
+        request_id: str,
+    ) -> str | None:
+        """Do the send_image handshake and d2d transfer (breaker suspended)."""
+        file_size = len(file)
 
         data = await self._send_art_request(
             {
