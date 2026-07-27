@@ -98,7 +98,9 @@ _MAX_BACKOFF = 60.0  # hard cap on the per-attempt reconnect delay (seconds)
 
 # Upload d2d socket: write the image in chunks of this size, draining after
 # each, so data really hits the wire before the socket is closed (see upload()).
-_UPLOAD_CHUNK_SIZE = 64 * 1024
+# The drain-per-chunk is what matters, not the chunk size; 512K keeps the
+# flush guarantee with far fewer syscalls than the reference's 64K.
+_UPLOAD_CHUNK_SIZE = 512 * 1024
 
 # Circuit breaker: consecutive request timeouts on a live socket before the
 # channel is declared wedged (TV art APP dead while its network stack keeps
