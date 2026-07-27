@@ -95,6 +95,7 @@ from .const import (
     ATTR_FILE_TYPE,
     ATTR_FILTER_ID,
     ATTR_MATTE_ID,
+    ATTR_SCREEN_RESOLUTION,
     ATTR_SHOW,
     ATTR_SHUFFLE,
     ATTR_STATUS,
@@ -2468,6 +2469,14 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         # obvious link back to this entity from the error alone.
         data = {ATTR_IP_ADDRESS: self._host, ATTR_CONFIG_ENTRY_ID: self._entry_id}
 
+        # Panel resolution as the TV reports it ("3840x2160"). Consumers that
+        # send images to the TV (the upload card) use it to avoid pushing more
+        # pixels than the panel can show — which the Frame rejects outright —
+        # without hardcoding 4K and penalising 8K sets.
+        if (info := self._device_info) and (device := info.get("device")):
+            if resolution := device.get("resolution"):
+                data[ATTR_SCREEN_RESOLUTION] = resolution
+
         # Art Mode status: delegate to _art_mode_is_on(), the single source of
         # truth (it layers IP Control cache → REST PowerState='standby' →
         # SmartThings switch=off → async Art API → WS artmode_status →
@@ -3471,13 +3480,27 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             self._log.debug("Frame Art: TV on (normal viewing), ready")
             return True
 
+        # state OFF is ambiguous on a Frame — Art Mode reports OFF too, and the
+        # art_mode_status attribute can be stale or unknown. Confirm with the
+        # TV itself before waking anything: powering on a panel that is already
+        # running toggles it out of Art Mode onto the last input (HDMI).
+        if self._art_api is not None:
+            try:
+                if await self._art_api.on():
+                    self._log.debug("Frame Art: TV reports powered, ready")
+                    return True
+            except Exception:  # noqa: BLE001 - best effort probe
+                pass
+
         # Genuinely off: power it on, then leave the mode alone.
         ip_client = self._get_ip_control_client()
         if ip_client is not None:
             try:
-                if await ip_client.async_get_power_state() == "powerOff":
-                    await ip_client.async_power_on()
-                    await asyncio.sleep(3)
+                if await ip_client.async_get_power_state() != "powerOff":
+                    self._log.debug("Frame Art: IP Control reports powered, ready")
+                    return True
+                await ip_client.async_power_on()
+                await asyncio.sleep(3)
                 self._log.debug("Frame Art: TV powered on via IP Control")
                 return True
             except SamsungIPControlError as ex:

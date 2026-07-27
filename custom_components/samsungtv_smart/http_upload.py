@@ -27,6 +27,12 @@ _LOGGER = logging.getLogger(__name__)
 # Guard against absurd uploads (Frame art is a few MB at most).
 _MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
+# Fallback panel size when the TV has not reported its resolution yet. Uploads
+# are fitted to the panel: more pixels than it can show buy nothing on screen
+# and are themselves a decode failure (the TV stores the entry, then displays a
+# grey rectangle). Aspect ratio is preserved and smaller images are left alone.
+_DEFAULT_PANEL = (3840, 2160)
+
 
 class SamsungArtUploadView(HomeAssistantView):
     """POST an image and push it to a Frame TV entity (auth required)."""
@@ -108,7 +114,36 @@ class SamsungArtUploadView(HomeAssistantView):
         return self.json(payload or {"success": True})
 
 
-def _prepare_image(data: bytes) -> tuple[bytes, str]:
+def _panel_size(state) -> tuple[int, int]:
+    """Panel resolution from the entity's ``screen_resolution`` attribute.
+
+    Reported by the TV itself ("3840x2160", "7680x4320" on 8K sets), so the
+    upload cap follows the hardware instead of assuming 4K forever.
+    """
+    raw = (state.attributes or {}).get("screen_resolution") if state else None
+    try:
+        width, height = (int(part) for part in str(raw).lower().split("x", 1))
+    except (AttributeError, TypeError, ValueError):
+        return _DEFAULT_PANEL
+    return (width, height) if width > 0 and height > 0 else _DEFAULT_PANEL
+
+
+def _fit_box(image_size: tuple[int, int], panel: tuple[int, int]) -> tuple[int, int]:
+    """Bounding box for an image, matched to the panel's orientation.
+
+    The panel's long and short edges are mapped onto the image's own long and
+    short edges. A landscape photo on a 3840x2160 Frame is capped at 3840x2160;
+    a portrait one is capped at 2160x3840, which is what a portrait-mounted
+    Frame (the art app has portrait mattes, and IP Control a display rotator)
+    actually displays — capping it at 2160 tall instead would throw away half
+    the detail of a portrait artwork.
+    """
+    long_edge, short_edge = max(panel), min(panel)
+    width, height = image_size
+    return (short_edge, long_edge) if height > width else (long_edge, short_edge)
+
+
+def _prepare_image(data: bytes, panel: tuple[int, int]) -> tuple[bytes, str]:
     """Re-encode any image into a plain JPEG the Frame is happy to decode.
 
     Every upload is normalised, not just the exotic ones. The TV is far pickier
@@ -121,9 +156,11 @@ def _prepare_image(data: bytes) -> tuple[bytes, str]:
     Encoding stays deliberately ordinary — ``quality=92`` with standard 4:2:0
     chroma — because that is what cameras, phones and the SmartThings app emit,
     and it is what the TV reliably accepts; maximal settings (quality=100,
-    4:4:4) were refused by the Frame. Resolution is left untouched, so the only
-    fidelity cost is a single re-quantisation. EXIF orientation is applied
-    before the metadata is dropped, so portrait photos are not sent sideways.
+    4:4:4) were refused by the Frame. Images larger than the panel are fitted
+    to it (aspect preserved, see :func:`_fit_box`) — beyond that the extra
+    pixels buy nothing on screen and are themselves a decode failure. EXIF
+    orientation is applied before the metadata is dropped, so portrait photos
+    are not sent sideways.
 
     Pillow (and the optional ``pillow-heif`` opener for iPhone HEIC) are
     imported lazily so a missing codec never breaks importing this module.
@@ -141,6 +178,9 @@ def _prepare_image(data: bytes) -> tuple[bytes, str]:
     with Image.open(io.BytesIO(data)) as img:
         img = ImageOps.exif_transpose(img)  # honour rotation, then drop EXIF
         rgb = img.convert("RGB")
+        box = _fit_box(rgb.size, panel)
+        if rgb.width > box[0] or rgb.height > box[1]:
+            rgb.thumbnail(box, Image.LANCZOS)
         out = io.BytesIO()
         rgb.save(
             out,
