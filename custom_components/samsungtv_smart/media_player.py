@@ -95,6 +95,7 @@ from .const import (
     ATTR_FILE_TYPE,
     ATTR_FILTER_ID,
     ATTR_MATTE_ID,
+    ATTR_SCREEN_RESOLUTION,
     ATTR_SHOW,
     ATTR_SHUFFLE,
     ATTR_STATUS,
@@ -2467,6 +2468,14 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         # silently break after a re-pairing changes the entry_id, with no
         # obvious link back to this entity from the error alone.
         data = {ATTR_IP_ADDRESS: self._host, ATTR_CONFIG_ENTRY_ID: self._entry_id}
+
+        # Panel resolution as the TV reports it ("3840x2160"). Consumers that
+        # send images to the TV (the upload card) use it to avoid pushing more
+        # pixels than the panel can show — which the Frame rejects outright —
+        # without hardcoding 4K and penalising 8K sets.
+        if (info := self._device_info) and (device := info.get("device")):
+            if resolution := device.get("resolution"):
+                data[ATTR_SCREEN_RESOLUTION] = resolution
 
         # Art Mode status: delegate to _art_mode_is_on(), the single source of
         # truth (it layers IP Control cache → REST PowerState='standby' →

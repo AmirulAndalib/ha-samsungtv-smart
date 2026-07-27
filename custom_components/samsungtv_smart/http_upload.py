@@ -27,12 +27,11 @@ _LOGGER = logging.getLogger(__name__)
 # Guard against absurd uploads (Frame art is a few MB at most).
 _MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
-# Uploads are fitted inside this box. 4K Frames display 3840x2160 and gain
-# nothing from more pixels, while oversized images (a 4259px-wide scan, a
-# 48MP phone shot) are a decode failure on the TV: it stores the entry and
-# then shows a grey rectangle. Aspect ratio is preserved; smaller images are
-# left alone.
-_MAX_SIZE = (3840, 2160)
+# Fallback panel size when the TV has not reported its resolution yet. Uploads
+# are fitted to the panel: more pixels than it can show buy nothing on screen
+# and are themselves a decode failure (the TV stores the entry, then displays a
+# grey rectangle). Aspect ratio is preserved and smaller images are left alone.
+_DEFAULT_PANEL = (3840, 2160)
 
 
 class SamsungArtUploadView(HomeAssistantView):
@@ -115,7 +114,36 @@ class SamsungArtUploadView(HomeAssistantView):
         return self.json(payload or {"success": True})
 
 
-def _prepare_image(data: bytes) -> tuple[bytes, str]:
+def _panel_size(state) -> tuple[int, int]:
+    """Panel resolution from the entity's ``screen_resolution`` attribute.
+
+    Reported by the TV itself ("3840x2160", "7680x4320" on 8K sets), so the
+    upload cap follows the hardware instead of assuming 4K forever.
+    """
+    raw = (state.attributes or {}).get("screen_resolution") if state else None
+    try:
+        width, height = (int(part) for part in str(raw).lower().split("x", 1))
+    except (AttributeError, TypeError, ValueError):
+        return _DEFAULT_PANEL
+    return (width, height) if width > 0 and height > 0 else _DEFAULT_PANEL
+
+
+def _fit_box(image_size: tuple[int, int], panel: tuple[int, int]) -> tuple[int, int]:
+    """Bounding box for an image, matched to the panel's orientation.
+
+    The panel's long and short edges are mapped onto the image's own long and
+    short edges. A landscape photo on a 3840x2160 Frame is capped at 3840x2160;
+    a portrait one is capped at 2160x3840, which is what a portrait-mounted
+    Frame (the art app has portrait mattes, and IP Control a display rotator)
+    actually displays — capping it at 2160 tall instead would throw away half
+    the detail of a portrait artwork.
+    """
+    long_edge, short_edge = max(panel), min(panel)
+    width, height = image_size
+    return (short_edge, long_edge) if height > width else (long_edge, short_edge)
+
+
+def _prepare_image(data: bytes, panel: tuple[int, int]) -> tuple[bytes, str]:
     """Re-encode any image into a plain JPEG the Frame is happy to decode.
 
     Every upload is normalised, not just the exotic ones. The TV is far pickier
@@ -129,10 +157,10 @@ def _prepare_image(data: bytes) -> tuple[bytes, str]:
     chroma — because that is what cameras, phones and the SmartThings app emit,
     and it is what the TV reliably accepts; maximal settings (quality=100,
     4:4:4) were refused by the Frame. Images larger than the panel are fitted
-    inside 3840x2160 (aspect preserved) — beyond that the extra pixels buy
-    nothing on screen and are themselves a decode failure. EXIF orientation is
-    applied before the metadata is dropped, so portrait photos are not sent
-    sideways.
+    to it (aspect preserved, see :func:`_fit_box`) — beyond that the extra
+    pixels buy nothing on screen and are themselves a decode failure. EXIF
+    orientation is applied before the metadata is dropped, so portrait photos
+    are not sent sideways.
 
     Pillow (and the optional ``pillow-heif`` opener for iPhone HEIC) are
     imported lazily so a missing codec never breaks importing this module.
@@ -150,8 +178,9 @@ def _prepare_image(data: bytes) -> tuple[bytes, str]:
     with Image.open(io.BytesIO(data)) as img:
         img = ImageOps.exif_transpose(img)  # honour rotation, then drop EXIF
         rgb = img.convert("RGB")
-        if rgb.width > _MAX_SIZE[0] or rgb.height > _MAX_SIZE[1]:
-            rgb.thumbnail(_MAX_SIZE, Image.LANCZOS)
+        box = _fit_box(rgb.size, panel)
+        if rgb.width > box[0] or rgb.height > box[1]:
+            rgb.thumbnail(box, Image.LANCZOS)
         out = io.BytesIO()
         rgb.save(
             out,
