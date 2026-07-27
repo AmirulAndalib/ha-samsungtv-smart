@@ -269,16 +269,9 @@ class SamsungTVAsyncArt:
         self._supports_thumbnail_list: bool | None = None
 
     def _get_uuid(self) -> str:
-        """Generate a new per-request UUID.
-
-        Does NOT touch self._art_uuid: that one is the stable client identity
-        for the whole art session (generated once in __init__). The reference
-        implementation sends "id": art_uuid (stable) with a fresh "request_id"
-        per request; 2024 Frames (LS03D) use the stable id to associate the
-        d2d upload with a known client — a throwaway id there makes the TV
-        abort the transfer (clientDisconnect, no image_added).
-        """
-        return str(uuid.uuid4())
+        """Generate a new UUID for art requests."""
+        self._art_uuid = str(uuid.uuid4())
+        return self._art_uuid
 
     def register_capability_callback(self, func) -> None:
         """Register a callback fired when a get-capability is first learned.
@@ -929,13 +922,12 @@ class SamsungTVAsyncArt:
             self._log.debug("Art API: WebSocket still not connected after open()")
             return None
 
-        # Set up request IDs (both old and new API style). Callers may pass a
-        # distinct request_id (fresh) and id (stable art_uuid) — see upload().
+        # Set up request IDs (both old and new API style)
         if not request_data.get("id"):
             request_data["id"] = self._get_uuid()
-        request_data.setdefault("request_id", request_data["id"])
+        request_data["request_id"] = request_data["id"]
 
-        request_key = wait_for_event or request_data["request_id"]
+        request_key = wait_for_event or request_data["id"]
 
         # Create future before sending
         self._pending_requests[request_key] = asyncio.get_event_loop().create_future()
@@ -1061,8 +1053,7 @@ class SamsungTVAsyncArt:
                 "conn_info": {
                     "d2d_mode": "socket",
                     "connection_id": random.randrange(4 * 1024 * 1024 * 1024),
-                    # Stable session id — same 2024-Frame requirement as upload().
-                    "id": self._art_uuid,
+                    "id": self._get_uuid(),
                 },
             },
             timeout=15,
@@ -1242,8 +1233,7 @@ class SamsungTVAsyncArt:
                 "conn_info": {
                     "d2d_mode": "socket",
                     "connection_id": random.randrange(4 * 1024 * 1024 * 1024),
-                    # Stable session id — same 2024-Frame requirement as upload().
-                    "id": self._art_uuid,
+                    "id": self._get_uuid(),
                 },
             },
             timeout=10,
@@ -1332,8 +1322,7 @@ class SamsungTVAsyncArt:
                 "conn_info": {
                     "d2d_mode": "socket",
                     "connection_id": random.randrange(4 * 1024 * 1024 * 1024),
-                    # Stable session id — same 2024-Frame requirement as upload().
-                    "id": self._art_uuid,
+                    "id": self._get_uuid(),
                 },
             },
             timeout=15,
@@ -1983,14 +1972,11 @@ class SamsungTVAsyncArt:
                 "request": "send_image",
                 "file_type": file_type,
                 "request_id": request_id,
-                # Stable session identity, NOT the throwaway request_id: 2024
-                # Frames tie the d2d transfer to this client id and abort the
-                # upload (clientDisconnect, no image_added) when it's unknown.
-                "id": self._art_uuid,
+                "id": request_id,
                 "conn_info": {
                     "d2d_mode": "socket",
                     "connection_id": random.randrange(4 * 1024 * 1024 * 1024),
-                    "id": self._art_uuid,
+                    "id": request_id,
                 },
                 "image_date": date,
                 "matte_id": matte or "none",
