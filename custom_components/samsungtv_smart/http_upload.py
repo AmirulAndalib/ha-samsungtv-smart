@@ -84,7 +84,7 @@ class SamsungArtUploadView(HomeAssistantView):
         # JPEG/PNG to JPEG before handing it to the upload service.
         try:
             data, suffix = await self._hass.async_add_executor_job(
-                _prepare_image, file_bytes
+                _prepare_image, file_bytes, _panel_size(state)
             )
         except Exception as ex:  # noqa: BLE001 - surface a clean error to the card
             _LOGGER.exception("Art upload: could not decode image")
