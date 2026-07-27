@@ -27,10 +27,6 @@ _LOGGER = logging.getLogger(__name__)
 # Guard against absurd uploads (Frame art is a few MB at most).
 _MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
-# Longest edge kept when re-encoding. 4K panels display 3840x2160 and gain
-# nothing from more; oversized images are a known decode failure on the TV.
-_MAX_EDGE = 3840
-
 
 class SamsungArtUploadView(HomeAssistantView):
     """POST an image and push it to a Frame TV entity (auth required)."""
@@ -113,23 +109,27 @@ class SamsungArtUploadView(HomeAssistantView):
 
 
 def _prepare_image(data: bytes) -> tuple[bytes, str]:
-    """Normalise any image into a JPEG The Frame can actually decode.
+    """Return (bytes, suffix) the Frame will accept, converting only if needed.
 
-    The TV is much pickier than a browser: a progressive JPEG, an exotic
-    chroma subsampling, a CMYK profile, a huge resolution or a fat EXIF blob
-    can all be *stored* by the TV and then fail to decode — the artwork shows
-    up as a grey rectangle with no thumbnail, and the TV never emits
-    ``image_added`` (so the upload also looks like it failed). 2024 panels
-    (QE55LS03D) are far stricter than 2023 ones, which is why the same file
-    could work on one Frame and not the other. The SmartThings app never hits
-    this because it re-encodes before sending — so do we, always: decode,
-    apply EXIF orientation, drop metadata, bound the size, and write a plain
-    baseline 4:2:0 JPEG.
+    JPEG/PNG bytes are passed through **untouched** — same as the
+    ``art_upload`` service, which uploads the file as-is: the TV accepts them
+    and there is no reason to recompress a picture the user chose. The magic
+    bytes are checked rather than the name/content-type, so a HEIC file
+    misnamed ``.jpeg`` (what iPhones hand browsers) is not trusted.
 
-    Pillow (and the optional ``pillow-heif`` opener for iPhone HEIC) are
-    imported lazily so a missing codec never breaks importing this module.
-    Runs in an executor (blocking PIL).
+    Anything else — notably iPhone HEIC/HEIF, which The Frame rejects outright
+    — is decoded and re-encoded to a baseline JPEG. EXIF orientation is applied
+    before the metadata is dropped, so a portrait photo is not sent sideways.
+
+    Pillow (and the optional ``pillow-heif`` opener for HEIC) are imported
+    lazily so a missing codec never breaks importing this module. Runs in an
+    executor (blocking PIL).
     """
+    if data[:3] == b"\xff\xd8\xff":  # JPEG SOI
+        return data, ".jpg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":  # PNG signature
+        return data, ".png"
+
     from PIL import Image, ImageOps  # noqa: PLC0415 - lazy: keep PIL out of import
 
     try:
@@ -140,20 +140,10 @@ def _prepare_image(data: bytes) -> tuple[bytes, str]:
         pass
 
     with Image.open(io.BytesIO(data)) as img:
-        # Honour EXIF rotation, then drop EXIF entirely (never re-saved).
-        img = ImageOps.exif_transpose(img)
+        img = ImageOps.exif_transpose(img)  # honour rotation, then drop EXIF
         rgb = img.convert("RGB")
-        if max(rgb.size) > _MAX_EDGE:
-            rgb.thumbnail((_MAX_EDGE, _MAX_EDGE), Image.LANCZOS)
         out = io.BytesIO()
-        rgb.save(
-            out,
-            format="JPEG",
-            quality=90,
-            progressive=False,  # baseline only — TVs reject progressive
-            subsampling="4:2:0",
-            optimize=False,
-        )
+        rgb.save(out, format="JPEG", quality=92, progressive=False)
     return out.getvalue(), ".jpg"
 
 
