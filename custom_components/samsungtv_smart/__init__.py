@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
 from pathlib import Path
 import socket
 import time
+from weakref import WeakValueDictionary
 
 from aiohttp import ClientConnectionError, ClientResponseError, ClientSession
 import async_timeout
@@ -182,9 +184,12 @@ CONFIG_SCHEMA = vol.Schema(
 
 _LOGGER = logging.getLogger(__name__)
 
-# Global lock dictionary to prevent concurrent OAuth refresh per entry
-# This is shared across all entities (media_player, switch, sensor)
-_OAUTH_REFRESH_LOCKS: dict[str, asyncio.Lock] = {}
+# Global lock dictionary to prevent concurrent OAuth refreshes for entries that
+# share a SmartThings refresh token. SmartThings rotates that token, so allowing
+# each TV entry to refresh it independently makes the first refresh invalidate
+# every sibling entry. Weak references avoid retaining one lock per daily token
+# rotation indefinitely.
+_OAUTH_REFRESH_LOCKS: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 _OAUTH_REFRESH_IN_PROGRESS: dict[str, bool] = {}
 # Set once the SmartThings refresh token is rejected with invalid_grant: the
 # refresh token is dead and retrying only hammers the auth endpoint (observed
@@ -227,11 +232,74 @@ def start_oauth_reauth(hass: HomeAssistant, entry_id: str) -> None:
             _LOGGER.debug("Could not start reauth flow: %s", exc)
 
 
-def get_oauth_refresh_lock(entry_id: str) -> asyncio.Lock:
-    """Get or create a lock for OAuth refresh for a specific entry."""
-    if entry_id not in _OAUTH_REFRESH_LOCKS:
-        _OAUTH_REFRESH_LOCKS[entry_id] = asyncio.Lock()
-    return _OAUTH_REFRESH_LOCKS[entry_id]
+def _oauth_refresh_group_key(entry: ConfigEntry) -> str:
+    """Return a non-secret key for entries sharing an OAuth refresh token."""
+    oauth_token = entry.data.get(CONF_OAUTH_TOKEN)
+    refresh_token = (
+        oauth_token.get("refresh_token") if isinstance(oauth_token, dict) else None
+    )
+    if not isinstance(refresh_token, str) or not refresh_token:
+        return f"entry:{entry.entry_id}"
+
+    implementation = entry.data.get("auth_implementation", DOMAIN)
+    token_digest = hashlib.sha256(refresh_token.encode()).hexdigest()
+    return f"{implementation}:{token_digest}"
+
+
+def get_oauth_refresh_lock(entry: ConfigEntry) -> asyncio.Lock:
+    """Get or create a lock for entries sharing an OAuth refresh token."""
+    group_key = _oauth_refresh_group_key(entry)
+    lock = _OAUTH_REFRESH_LOCKS.get(group_key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _OAUTH_REFRESH_LOCKS[group_key] = lock
+    return lock
+
+
+@callback
+def update_shared_oauth_token(
+    hass: HomeAssistant,
+    source_entry: ConfigEntry,
+    previous_token: dict,
+    new_token: dict,
+    source_data_updates: dict | None = None,
+) -> int:
+    """Store a rotated OAuth token in all entries that shared its predecessor."""
+    previous_refresh_token = previous_token.get("refresh_token")
+    implementation = source_entry.data.get("auth_implementation", DOMAIN)
+    updated_count = 0
+
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        entry_token = entry.data.get(CONF_OAUTH_TOKEN)
+        is_source = entry.entry_id == source_entry.entry_id
+        if not is_source:
+            if not previous_refresh_token or not isinstance(entry_token, dict):
+                continue
+            if entry_token.get("refresh_token") != previous_refresh_token:
+                continue
+            if entry.data.get("auth_implementation", DOMAIN) != implementation:
+                continue
+
+        hass.config_entries.async_update_entry(
+            entry,
+            data={
+                **entry.data,
+                CONF_OAUTH_TOKEN: new_token,
+                CONF_API_KEY: new_token["access_token"],
+                "auth_implementation": implementation,
+                **(source_data_updates if is_source and source_data_updates else {}),
+            },
+        )
+        set_oauth_token_invalid(entry.entry_id, False)
+        ir.async_delete_issue(hass, DOMAIN, f"oauth_auth_failed_{entry.entry_id}")
+        updated_count += 1
+
+    _LOGGER.info(
+        "OAuth token updated for %d TV entr%s sharing the previous token",
+        updated_count,
+        "y" if updated_count == 1 else "ies",
+    )
+    return updated_count
 
 
 def is_oauth_refresh_in_progress(entry_id: str) -> bool:
@@ -562,7 +630,7 @@ async def async_get_samsungtv_api_key(  # noqa: C901
                     # (ST sensors, power switch) race the media_player refresh
                     # at startup, and a stale token here makes their setup
                     # fail with an auth error until the next reload.
-                    lock = get_oauth_refresh_lock(entry.entry_id)
+                    lock = get_oauth_refresh_lock(entry)
                     async with lock:
                         # Double-check after acquiring lock - token might have been refreshed
                         updated_entry = hass.config_entries.async_get_entry(
@@ -576,6 +644,8 @@ async def async_get_samsungtv_api_key(  # noqa: C901
                                     "Token was refreshed by another entity, using new token"
                                 )
                                 return updated_token.get("access_token")
+                            entry = updated_entry
+                            oauth_token = updated_token
 
                         set_oauth_refresh_in_progress(entry.entry_id, True)
                         try:
@@ -636,15 +706,11 @@ async def async_get_samsungtv_api_key(  # noqa: C901
                                 new_token = await implementation.async_refresh_token(
                                     oauth_token
                                 )
-                                # Update entry with new token
-                                hass.config_entries.async_update_entry(
+                                update_shared_oauth_token(
+                                    hass,
                                     entry,
-                                    data={
-                                        **entry.data,
-                                        CONF_OAUTH_TOKEN: new_token,
-                                        CONF_API_KEY: new_token["access_token"],
-                                        "auth_implementation": DOMAIN,
-                                    },
+                                    oauth_token,
+                                    new_token,
                                 )
                                 _LOGGER.info("OAuth token refreshed successfully")
                                 set_oauth_token_invalid(entry.entry_id, False)
