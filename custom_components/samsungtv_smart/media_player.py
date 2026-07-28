@@ -73,6 +73,7 @@ from . import (
     set_oauth_refresh_in_progress,
     set_oauth_token_invalid,
     start_oauth_reauth,
+    update_shared_oauth_token,
 )
 from .api.art import SamsungTVAsyncArt
 from .api.ipcontrol import (
@@ -821,12 +822,15 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         if self._auth_method != AUTH_METHOD_OAUTH:
             return True
 
-        # Acquire the global per-entry lock. If another task is already
-        # refreshing, this WAITS for it to finish instead of sleeping an
-        # arbitrary 0.5s (a real SmartThings refresh round-trip routinely
-        # takes longer, which left this update cycle on the stale token);
-        # the double-check below then adopts the freshly stored token.
-        lock = get_oauth_refresh_lock(self._entry_id)
+        entry = self.hass.config_entries.async_get_entry(self._entry_id)
+        if not entry:
+            self._log.warning("Could not find config entry for OAuth refresh")
+            return False
+
+        # Entries that share a refresh token also share this lock. The first
+        # refresh propagates the rotated token before releasing it; waiters then
+        # adopt that stored token instead of submitting the invalid predecessor.
+        lock = get_oauth_refresh_lock(entry)
         async with lock:
             # Double-check after acquiring lock - another entity might have refreshed
             entry = self.hass.config_entries.async_get_entry(self._entry_id)
@@ -1060,15 +1064,11 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
 
             new_token = await implementation.async_refresh_token(oauth_token)
 
-            # Update config entry with new token and auth_implementation
-            self.hass.config_entries.async_update_entry(
+            update_shared_oauth_token(
+                self.hass,
                 entry,
-                data={
-                    **entry.data,
-                    CONF_OAUTH_TOKEN: new_token,
-                    CONF_API_KEY: new_token["access_token"],
-                    "auth_implementation": DOMAIN,
-                },
+                oauth_token,
+                new_token,
             )
 
             # Update local api key

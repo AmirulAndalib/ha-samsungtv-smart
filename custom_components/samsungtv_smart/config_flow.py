@@ -45,6 +45,7 @@ from . import (
     get_smartthings_api_key,
     get_smartthings_entries,
     is_valid_ha_version,
+    update_shared_oauth_token,
 )
 from .const import (
     ART_LLM_PROVIDERS,
@@ -896,16 +897,12 @@ class SamsungTVSmartOAuth2FlowHandler(
         if not self._reauth_entry:
             return self.async_abort(reason="reauth_failed")
 
-        self.hass.config_entries.async_update_entry(
+        update_shared_oauth_token(
+            self.hass,
             self._reauth_entry,
-            data={
-                **self._reauth_entry.data,
-                CONF_API_KEY: self._oauth_data["token"]["access_token"],
-                CONF_OAUTH_TOKEN: self._oauth_data["token"],
-                CONF_AUTH_METHOD: AUTH_METHOD_OAUTH,
-                # Store auth_implementation to enable token refresh
-                "auth_implementation": DOMAIN,
-            },
+            self._reauth_entry.data.get(CONF_OAUTH_TOKEN, {}),
+            self._oauth_data["token"],
+            {CONF_AUTH_METHOD: AUTH_METHOD_OAUTH},
         )
         # The data update above triggers the update listener, which schedules
         # the reload — reloading here too is deprecated in HA.
