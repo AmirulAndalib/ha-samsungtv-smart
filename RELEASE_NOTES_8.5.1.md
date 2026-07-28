@@ -6,7 +6,8 @@ If this project is useful to you, you can support its development:
 
 > **Status: stable release.** A maintenance release on top of 8.5.0 — no
 > breaking changes and no configuration to touch. It makes the new upload card
-> actually reliable on 2024 Frames, and adds a `send_text` service.
+> actually reliable on 2024 Frames, fixes OAuth for multi-TV setups, and adds a
+> `send_text` service.
 
 ## Highlights
 
@@ -18,6 +19,8 @@ If this project is useful to you, you can support its development:
 - **Images are fitted to your panel**, in either orientation, using the
   resolution the TV itself reports (so 8K sets are not shrunk to 4K).
 - **New `send_text` service** to type into a text field on the TV.
+- **Multi-TV OAuth no longer breaks itself** — refreshing the SmartThings token
+  on one TV stopped invalidating the others.
 
 ---
 
@@ -82,6 +85,35 @@ short edges onto the image's own:
 Without this, portrait artwork was squashed to 2160 px tall — throwing away half
 the detail a portrait-mounted Frame can display.
 
+## Multi-TV OAuth: token rotation no longer breaks sibling entries
+
+Reported and fixed by @tdalejandro (#180, #181).
+
+With several TVs set up as separate entries sharing one set of SmartThings
+Application Credentials, every entry stored its own copy of the same OAuth
+token pair. SmartThings **rotates the refresh token** on each refresh, so the
+first entry to refresh got the new pair while the others kept the now-dead
+predecessor — they failed with `400 / invalid_grant` and demanded manual
+reauthentication. Reauthenticating them all restored service and immediately
+recreated the same condition, so OAuth was never really maintenance-free in a
+multi-TV setup.
+
+Refreshes are now coordinated per *token group* rather than per entry:
+
+- entries sharing an OAuth implementation **and** the same refresh token share
+  one lock, so a rotation is requested **once** instead of once per TV;
+- the rotated pair is propagated to exactly those sibling entries that held the
+  same predecessor — entries on other credentials are never touched;
+- the same propagation happens after a manual reauthentication, so reauthing
+  **one** TV now fixes them all;
+- stale "token invalid" state and the matching Repairs issues are cleared on
+  every entry that was updated.
+
+> **Note:** storing the rotated token reloads each updated entry, so on a
+> routine refresh all TVs sharing the token reload together (entities are
+> briefly unavailable). That replaces the previous behaviour where the sibling
+> entries simply broke.
+
 ## New: `send_text` service
 
 The integration could always type text on the TV, but only through a generic
@@ -112,6 +144,9 @@ data:
 - No configuration changes. Update via HACS and restart Home Assistant.
 - If you had failed uploads on a 2024 Frame, delete the leftover grey entries
   from the TV's art library — they cannot recover on their own.
+- Multi-TV OAuth users: if some entries are currently in an error state,
+  reauthenticate **one** of them — the restored token now propagates to every
+  entry that shared the old one.
 
 ---
 
@@ -126,6 +161,9 @@ data:
 - **Fix:** uploading no longer forces Art Mode on, and never wakes a TV that is
   already running (which used to switch a Frame to HDMI).
 - **Fix:** image data is sent to the TV in chunks instead of one buffered write.
+- **Fix:** OAuth refresh-token rotation is coordinated across TV entries that
+  share credentials, so refreshing one TV no longer invalidates the others
+  (#180, thanks @tdalejandro).
 - **New:** `samsungtv_smart.send_text` service, plus a new `screen_resolution`
   media-player attribute.
 - **Docs:** `send_text` scope, and the integration's local-first design with
