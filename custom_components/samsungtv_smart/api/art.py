@@ -30,6 +30,8 @@ import uuid
 
 import aiohttp
 
+from . import _image_prep
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -1935,8 +1937,15 @@ class SamsungTVAsyncArt:
         date: str | None = None,
         timeout: int = 30,
         hass=None,
+        panel: tuple[int, int] | None = None,
     ) -> str | None:
-        """Upload a new image to the TV."""
+        """Upload a new image to the TV.
+
+        The image is normalised (baseline JPEG, EXIF stripped, fitted to
+        ``panel``) before it is sent — see ``_image_prep``. Every upload path
+        funnels through here, so the card, ``art_upload`` and
+        ``art_upload_batch`` all get the same treatment.
+        """
         self._log.debug("Art API: Starting upload, file type: %s", type(file))
 
         if isinstance(file, str):
@@ -1961,6 +1970,26 @@ class SamsungTVAsyncArt:
             except Exception as ex:
                 self._log.error("Art API: Failed to read file: %s", ex)
                 return None
+
+        # Normalise to something the TV can actually decode. Done here rather
+        # than per-caller so the service and batch paths get it too; the batch
+        # fingerprints (mtime / perceptual hash) are computed on the SOURCE
+        # file before this, so skip-unchanged and dedup are unaffected.
+        try:
+            if hass is not None:
+                file, _suffix = await hass.async_add_executor_job(
+                    _image_prep.normalise_for_frame,
+                    file,
+                    panel or _image_prep.DEFAULT_PANEL,
+                )
+            else:
+                file, _suffix = _image_prep.normalise_for_frame(
+                    file, panel or _image_prep.DEFAULT_PANEL
+                )
+            file_type = "jpg"
+        except Exception as ex:  # noqa: BLE001 - unsupported/corrupt image
+            self._log.error("Art API: Could not prepare image for upload: %s", ex)
+            return None
 
         file_size = len(file)
         file_type = _detect_wire_type(file, hint=file_type)
@@ -2137,6 +2166,7 @@ class SamsungTVAsyncArt:
         throttle: float = 2.0,
         sidecar_path: str | None = None,
         dedup_dir: str | None = None,
+        panel: tuple[int, int] | None = None,
     ) -> dict:
         """Upload a list of image files, cheaply and idempotently.
 
@@ -2204,7 +2234,7 @@ class SamsungTVAsyncArt:
                 await asyncio.sleep(throttle)
             did_upload = True
 
-            content_id = await self.upload(path, matte=matte, hass=hass)
+            content_id = await self.upload(path, matte=matte, hass=hass, panel=panel)
             if content_id:
                 uploaded.append(content_id)
                 sidecar[name] = {"content_id": content_id, "modified": mtime}
