@@ -3455,6 +3455,15 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             self.hass, entry, content_id, cache=cache, force=force
         )
 
+    def _art_panel_size(self) -> tuple[int, int]:
+        """Panel resolution for upload fitting, as the TV reports it."""
+        from .api._image_prep import panel_size  # noqa: PLC0415 - lazy
+
+        resolution = None
+        if (info := self._device_info) and (device := info.get("device")):
+            resolution = device.get("resolution")
+        return panel_size(resolution)
+
     async def _ensure_tv_awake_for_art(self) -> bool:
         """Ensure the TV is powered, WITHOUT forcing it into Art Mode.
 
@@ -3723,6 +3732,7 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
                 matte=matte_id,
                 file_type=file_type,
                 hass=self.hass,
+                panel=self._art_panel_size(),
             )
             if content_id:
                 self._log.info(
@@ -3805,6 +3815,7 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             throttle=throttle,
             sidecar_path=sidecar_path,
             dedup_dir=dedup_dir,
+            panel=self._art_panel_size(),
         )
 
         # Reflect the new art and fetch the (delayed) TV-side thumbnails.
