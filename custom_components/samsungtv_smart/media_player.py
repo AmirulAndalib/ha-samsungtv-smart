@@ -1942,7 +1942,19 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
 
         try:
             device_info: dict[str, Any] = await self._rest_api.async_rest_device_info()
-            self._log.debug("Device info on %s is: %s", self._host, device_info)
+            # This payload is ~40 mostly-immutable fields (model, MAC, codec
+            # support...) refetched every poll cycle, so dumping it whole each
+            # time buried real events under tens of MB of noise — 21% of a 26h
+            # debug log. Log it in full only when it actually changes, and a
+            # one-liner with the field that does (PowerState) otherwise.
+            if device_info != self._device_info:
+                self._log.debug("Device info on %s is: %s", self._host, device_info)
+            else:
+                self._log.debug(
+                    "Device info on %s unchanged (PowerState=%s)",
+                    self._host,
+                    (device_info.get("device") or {}).get("PowerState"),
+                )
             self._device_info = device_info
         except Exception as ex:  # pylint: disable=broad-except
             self._log.debug("Error retrieving device info on %s: %s", self._host, ex)
