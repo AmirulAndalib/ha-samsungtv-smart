@@ -33,6 +33,7 @@ from .api.ipcontrol import (
     SamsungIPControlAuthError,
     SamsungIPControlError,
     SamsungIPControlModeLockedError,
+    resolve_speaker_select_option,
 )
 from .const import (
     AUTH_METHOD_OAUTH,
@@ -780,6 +781,7 @@ class SamsungTVIPControlSpeakerSelect(SelectEntity):
                 dev["deviceName"]: dev["deviceId"]
                 for dev in await client.async_get_external_speakers()
             }
+            current = resolve_speaker_select_option(current, self._external_devices)
         except SamsungIPControlAuthError as ex:
             _LOGGER.warning(
                 "IP Control speaker read for %s: token rejected (%s) — "

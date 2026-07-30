@@ -72,6 +72,25 @@ LIST_RESULT_KEY = "_list_result"
 CMD_TIMEOUT = 5  # seconds for normal commands
 PAIR_TIMEOUT = 30  # seconds: pairing waits for the on-screen acceptance
 
+
+def resolve_speaker_select_option(
+    value: str, external_devices: dict[str, str]
+) -> str:
+    """Return the public option name for a speaker output value.
+
+    Some Q-Symphony firmware reports the external speaker's device ID in
+    ``getTVStates.speakerSelect`` instead of a public target name. Resolve that
+    ID to the device name published by ``externalSpeakerControl`` and normalize
+    the standard target names reported with inconsistent capitalization.
+    """
+    for name, device_id in external_devices.items():
+        if value == device_id:
+            return name
+
+    public_options = {option.casefold(): option for option in SPEAKER_SELECT_OPTIONS}
+    return public_options.get(value.casefold(), value)
+
+
 # JSON-RPC error code returned when the access token is missing/expired.
 ERROR_UNAUTHORIZED = -32010
 # JSON-RPC "Parse error". Our requests are always well-formed JSON, and the 32"
@@ -370,11 +389,21 @@ class SamsungIPControl:
         ``speakerSelectControl`` called with no params echoes the current
         output, capitalized ("Internal"/"External") — unlike the mirror field
         in ``getTVStates`` which reports it lowercase.
+
+        Some Q-Symphony firmware returns ``null`` from this dedicated getter
+        while ``getTVStates.speakerSelect`` still contains the active external
+        device ID. Fall back to that snapshot so callers can resolve the ID
+        against ``externalSpeakerControl``.
         """
         result = await self._async_request("speakerSelectControl")
         value = result.get("speakerSelect")
         if not isinstance(value, str) or not value:
-            raise SamsungIPControlError(f"no speakerSelect in response: {result!r}")
+            states = await self.async_get_tv_states()
+            value = states.get("speakerSelect")
+        if not isinstance(value, str) or not value:
+            raise SamsungIPControlError(
+                "no speakerSelect in speakerSelectControl or getTVStates response"
+            )
         return value
 
     async def async_set_speaker_select(self, value: str) -> None:
