@@ -73,9 +73,7 @@ CMD_TIMEOUT = 5  # seconds for normal commands
 PAIR_TIMEOUT = 30  # seconds: pairing waits for the on-screen acceptance
 
 
-def resolve_speaker_select_option(
-    value: str, external_devices: dict[str, str]
-) -> str:
+def resolve_speaker_select_option(value: str, external_devices: dict[str, str]) -> str:
     """Return the public option name for a speaker output value.
 
     Some Q-Symphony firmware reports the external speaker's device ID in
