@@ -128,6 +128,39 @@ integration now tells a TV in standby (which still answers its REST endpoint)
 apart from one that is unplugged or faulty (which does not), and fails straight
 away with *"<host> is unreachable — cannot upload"* instead of stalling.
 
+## Famous artworks no longer come back "not identified"
+
+Well-known paintings were being reported as unidentified with a confidence
+around 0.1, even though the description of what the model *saw* was accurate.
+The pipeline was working; the rules it was given were not.
+
+**Reverse image search often fails on artwork, and fails noisily.** When Google
+Vision does not find the picture anywhere, it does not return nothing — it
+returns plausible-looking filler: entities like *Painting*, *Art*, *Artwork*,
+and page titles like *"How To Master Painting With Zero Experience"* or
+*"The Basics Of Digital Illustration - YouTube"*. Two consequences:
+
+- **The filler is now stripped.** Generic entities are pushed behind the
+  concrete ones, and tutorial/listicle pages are dropped outright — so an empty
+  page list honestly means *found nowhere*, instead of looking well-sourced.
+  On a real case from the logs, the useful leads *The Kimono* and
+  *Thyssen-Bornemisza National Museum* were sitting third and first in a list
+  otherwise made of *Painting / Art / Drawing / Artist / Artwork*, alongside
+  five painting tutorials. Genuine museum and Wikipedia pages are untouched.
+- **The model may now identify from its own knowledge** when no candidate is
+  usable. Previously it was told to confirm a candidate *or nothing* — a
+  deliberate guard against invented attributions, but one that made a Renoir
+  unidentifiable the moment the reverse search came back empty. It can now name
+  a work it genuinely recognises, with `matched_candidate` left `null` and
+  **confidence capped at 0.6** to mark that nothing external corroborates it.
+  The guard itself stays: recognising a style, a period or a school is
+  explicitly *not* recognising the work, and attribution by resemblance is
+  still forbidden.
+
+So a high confidence still means "corroborated by the web", and anything at
+0.6 or below means "the model recognised it unaided" — the two remain
+distinguishable in the sensor attributes.
+
 ## Clearer failures
 
 Two error paths that used to mislead:
@@ -176,5 +209,8 @@ Two error paths that used to mislead:
   rather than failing silently on every artwork.
 - **Fix:** the gallery card uploads to a Frame that is actually reachable
   instead of falling back to the configured entity when only one is found.
+- **Fix:** well-known artworks were reported unidentified when reverse image
+  search returned only generic filler — the filler is now stripped, and the
+  model may identify a work it recognises unaided (confidence capped at 0.6).
 - **Fix:** an upload to an unreachable TV fails immediately with a clear
   message instead of hanging on a power-on that cannot happen.
