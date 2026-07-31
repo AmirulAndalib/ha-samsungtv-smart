@@ -98,7 +98,9 @@ _CACHE_STORE_VERSION = 1
 # cached hits are untouched, since a confirmed identification stays valid.
 #   1 — original "confirm a candidate or nothing" prompt
 #   2 — candidate de-noising + identification from the model's own knowledge
-_PIPELINE_REVISION = 2
+#   3 — real image media type sent; prompt no longer implies "old master
+#       painting", which made the model withhold graphic/contemporary works
+_PIPELINE_REVISION = 3
 _HTTP_TIMEOUT = 45  # seconds per external call
 # Output token budget for the confirmation reply. Must fit the whole JSON —
 # title + three prose fields in every LANGS language — or the reply is
@@ -387,15 +389,25 @@ def _build_llm_prompt(candidates: dict[str, list[str]]) -> str:
         '"matched_candidate", and use your normal confidence.\n'
         "2. The candidate list is often empty or generic, because reverse "
         "image search regularly fails on artwork. In that case you MAY still "
-        "identify the work from your OWN knowledge, but only if you genuinely "
-        "recognise this specific piece — a famous painting you can name with "
-        'its artist. Then set "identified": true, leave '
-        '"matched_candidate": null, and cap "confidence" at 0.6 to mark that '
-        "no external source corroborates it.\n"
+        "identify the work from your OWN knowledge, whenever you genuinely "
+        'recognise what you are looking at. Then set "identified": true, '
+        'leave "matched_candidate": null, and cap "confidence" at 0.6 to mark '
+        "that no external source corroborates it.\n"
+        "   The Samsung Art Store is not limited to old master paintings: it "
+        "sells photography, prints, posters, graphic design, street art, "
+        "cartoons, calligraphy and contemporary illustration. Do NOT withhold "
+        "an identification because the image looks like an icon, a doodle, "
+        "clip art or a logo rather than a traditional painting — that is "
+        "exactly what a large part of the catalogue is. A signature motif you "
+        "can name together with its artist (for instance an artist's "
+        "recurring emblematic figure) counts as recognising the work: give "
+        "the motif's usual name as the title.\n"
         '3. If you do not recognise the work, set "identified": false and '
-        "leave artist/date null. A recognisable STYLE, period or school is NOT "
-        "recognising the work — do not guess a plausible title, and never "
-        "attribute it to an artist merely because it looks like their manner.\n"
+        "leave artist/date null. Recognising a STYLE, period or school alone "
+        "is NOT recognising the work — do not guess a plausible title, and "
+        "never attribute a piece to an artist merely because it looks like "
+        "their manner. The test is whether you can name it, not whether it "
+        "reminds you of someone.\n"
         "Do NOT invent facts. Separate the visual description from the factual "
         "identification. confidence is a number from 0 to 1. Always fill "
         "visual_description, even when the work is not identified.\n"
