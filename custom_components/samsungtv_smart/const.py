@@ -97,11 +97,15 @@ CONF_ART_IDENTIFY_PERSONAL = "art_identify_personal"
 
 ART_LLM_PROVIDERS = ("anthropic", "openai", "gemini")
 DEFAULT_ART_LLM_PROVIDER = "anthropic"
-# Sensible current defaults; user-overridable in the options.
+# Last-resort defaults, used ONLY when the provider's model list cannot be
+# read (no key yet, or the API is unreachable). The real default is picked
+# from the live list — see art_identify.async_pick_default_model — because a
+# pinned id eventually gets retired and breaks identification for everyone who
+# never touched the setting (issue #188).
 DEFAULT_ART_LLM_MODEL = {
     "anthropic": "claude-haiku-4-5",
-    "openai": "gpt-4o",
-    "gemini": "gemini-2.5-flash",
+    "openai": "gpt-4o-mini",
+    "gemini": "gemini-flash-latest",
 }
 
 # Cache TTLs (seconds). A successful identification never changes, so it is kept

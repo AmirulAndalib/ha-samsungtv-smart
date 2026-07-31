@@ -72,6 +72,14 @@ class LLMError(Exception):
     """LLM confirmation call failed or returned unparseable output."""
 
 
+class ModelUnavailableError(LLMError):
+    """The configured model was rejected by the provider (retired/typo).
+
+    A subclass so existing handlers keep catching it, while callers that care
+    can tell a configuration problem apart from a transport failure.
+    """
+
+
 _VISION_URL = "https://vision.googleapis.com/v1/images:annotate"
 _ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 _ANTHROPIC_VERSION = "2023-06-01"
@@ -87,7 +95,14 @@ _HTTP_TIMEOUT = 45  # seconds per external call
 # title + three prose fields in every LANGS language — or the reply is
 # truncated and fails to parse. 700 was fine single-language; 5 languages need
 # far more headroom.
-_LLM_MAX_TOKENS = 3000
+_LLM_MAX_TOKENS = 8000
+
+# Gemini 2.5+/3.x spend "thinking" tokens from the SAME budget as the answer,
+# and reason by default. With a modest cap the reply is cut off mid-JSON —
+# which surfaces as a cryptic "Expecting ',' delimiter" rather than a quota
+# error (issue #188). Disable thinking for this task: it is a constrained
+# extraction against a supplied candidate list, not a reasoning problem.
+_GEMINI_THINKING_BUDGET = 0
 
 # Languages the metadata is produced in, so each viewer can be shown the
 # artwork description in their own UI language (the Lovelace card picks by the
@@ -264,12 +279,40 @@ def _build_llm_prompt(candidates: dict[str, list[str]]) -> str:
 
 
 def _parse_llm_json(raw: str) -> dict[str, Any]:
-    """Extract the JSON object from an LLM reply, tolerating stray fences/prose."""
-    start = raw.find("{")
-    end = raw.rfind("}")
-    if start == -1 or end == -1 or end < start:
-        raise LLMError(f"no JSON object in LLM reply: {raw[:200]}")
-    return json.loads(raw[start : end + 1])
+    """Extract the JSON object from an LLM reply, tolerating stray fences/prose.
+
+    Raises a *diagnosable* error when the reply was cut short. A truncated
+    answer used to surface as ``Expecting ',' delimiter: line 20 column 6``,
+    which tells the user nothing about the actual cause (the model spent its
+    token budget before finishing the JSON — see ``_GEMINI_THINKING_BUDGET``).
+    """
+    text = raw.strip()
+    if not text:
+        raise LLMError("empty LLM reply (model returned no text)")
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1:
+        raise LLMError(f"no JSON object in LLM reply: {text[:200]}")
+
+    if end < start:
+        raise LLMError(
+            "LLM reply was cut off before the JSON closed — the model ran out "
+            f"of output tokens. Reply ended with: ...{text[-120:]!r}"
+        )
+
+    try:
+        return json.loads(text[start : end + 1])
+    except json.JSONDecodeError as ex:
+        # An unbalanced brace count is the signature of a truncated reply,
+        # as opposed to a genuinely malformed one.
+        candidate = text[start : end + 1]
+        if candidate.count("{") != candidate.count("}"):
+            raise LLMError(
+                "LLM reply was cut off mid-JSON — the model ran out of output "
+                f"tokens ({ex}). Try a lighter model or a larger budget."
+            ) from ex
+        raise LLMError(f"could not parse LLM JSON ({ex}): {candidate[:200]}") from ex
 
 
 async def async_llm_confirm(
@@ -360,7 +403,10 @@ async def async_llm_confirm(
             "generationConfig": {
                 "temperature": 0.1,
                 "maxOutputTokens": _LLM_MAX_TOKENS,
-                "response_mime_type": "application/json",
+                # camelCase is the documented REST spelling (the snake_case
+                # form is the Python SDK's).
+                "responseMimeType": "application/json",
+                "thinkingConfig": {"thinkingBudget": _GEMINI_THINKING_BUDGET},
             },
         }
         # Gemini takes the key as a query param, not a header.
@@ -373,6 +419,22 @@ async def async_llm_confirm(
     ) as resp:
         if resp.status != 200:
             text = await resp.text()
+            # A retired or mistyped model is a configuration problem, not a
+            # transient failure: retrying it forever just burns quota and
+            # leaves a cryptic 404 in the log. Name the alternatives instead.
+            if resp.status == 404:
+                available = await async_list_models(session, provider, api_key)
+                suggestion = (
+                    f" Available models for this key include: "
+                    f"{', '.join(available[:8])}."
+                    if available
+                    else ""
+                )
+                raise ModelUnavailableError(
+                    f"{provider} model {model!r} is not available to this API "
+                    f"key.{suggestion} Update it under Configure → Art "
+                    f"Identification."
+                )
             raise LLMError(f"{provider} API {resp.status}: {text[:200]}")
         data = await resp.json()
 
@@ -582,3 +644,124 @@ async def async_identify_for_entry(
     )
     result["content_id"] = content_id
     return result
+
+
+# --- Model discovery -------------------------------------------------------
+#
+# Hardcoding a model id gives it an expiry date: providers retire models and
+# the integration then fails with a 404 for everyone who never touched the
+# setting (issue #188, where the pinned gemini-2.5-flash became unavailable to
+# new users). Ask the provider what it actually offers instead, the way Home
+# Assistant's own Google Generative AI integration does.
+
+_MODELS_URL = {
+    "anthropic": "https://api.anthropic.com/v1/models",
+    "openai": "https://api.openai.com/v1/models",
+    "gemini": "https://generativelanguage.googleapis.com/v1beta/models",
+}
+
+# Preference order used to pick a default from the live list: cheap, fast,
+# vision-capable models first. Matched as substrings, best match wins.
+_MODEL_PREFERENCE = {
+    "anthropic": ("haiku", "sonnet"),
+    "openai": ("mini", "gpt-4o", "gpt-4"),
+    "gemini": ("flash-lite", "flash"),
+}
+
+# Substrings marking models that cannot do the job (no vision, or a different
+# modality entirely), so they never reach the picker.
+_MODEL_EXCLUDE = (
+    "embed",
+    "tts",
+    "whisper",
+    "audio",
+    "moderation",
+    "image-",
+    "dall-e",
+    "realtime",
+    "transcribe",
+    "search",
+    "veo",
+    "imagen",
+)
+
+
+async def async_list_models(
+    session: ClientSession, provider: str, api_key: str
+) -> list[str]:
+    """Return the model ids this key can actually use, best candidates first.
+
+    Raises :class:`LLMError` when the key is rejected or the provider is
+    unreachable, so the config flow can report a precise reason instead of
+    silently offering an empty list.
+    """
+    url = _MODELS_URL.get(provider)
+    if url is None:
+        raise LLMError(f"unknown LLM provider: {provider!r}")
+
+    headers: dict[str, str] = {}
+    params: dict[str, str] = {}
+    if provider == "anthropic":
+        headers = {"x-api-key": api_key, "anthropic-version": _ANTHROPIC_VERSION}
+        params = {"limit": "1000"}
+    elif provider == "openai":
+        headers = {"Authorization": f"Bearer {api_key}"}
+    else:  # gemini takes the key as a query param
+        params = {"key": api_key, "pageSize": "1000"}
+
+    async with session.get(
+        url, headers=headers, params=params, timeout=_HTTP_TIMEOUT
+    ) as resp:
+        if resp.status != 200:
+            text = await resp.text()
+            raise LLMError(f"{provider} model list {resp.status}: {text[:200]}")
+        data = await resp.json()
+
+    names: list[str] = []
+    if provider == "gemini":
+        for item in data.get("models") or []:
+            # Only models that can answer a generateContent call are usable.
+            if "generateContent" not in (item.get("supportedGenerationMethods") or []):
+                continue
+            # The API returns "models/gemini-x"; the request path wants the bare id.
+            names.append(str(item.get("name", "")).removeprefix("models/"))
+    else:  # anthropic and openai share the {"data": [{"id": ...}]} shape
+        names = [str(item.get("id", "")) for item in data.get("data") or []]
+
+    usable = [
+        name
+        for name in names
+        if name and not any(bad in name.lower() for bad in _MODEL_EXCLUDE)
+    ]
+    return sort_models_by_preference(provider, usable)
+
+
+def sort_models_by_preference(provider: str, models: list[str]) -> list[str]:
+    """Order models so the cheapest sensible default comes first.
+
+    Within a preference tier the provider's own order is kept (Anthropic
+    returns newest first, and for the others alphabetical is stable enough),
+    so a newly released haiku outranks last year's.
+    """
+    preference = _MODEL_PREFERENCE.get(provider, ())
+
+    def rank(name: str) -> tuple[int, str]:
+        lowered = name.lower()
+        for index, token in enumerate(preference):
+            if token in lowered:
+                return (index, "")
+        return (len(preference), lowered)
+
+    return sorted(models, key=rank)
+
+
+async def async_pick_default_model(
+    session: ClientSession, provider: str, api_key: str
+) -> str | None:
+    """Best available model for a provider, or None if the list can't be read."""
+    try:
+        models = await async_list_models(session, provider, api_key)
+    except (LLMError, ClientError, TimeoutError) as ex:
+        _LOGGER.debug("Could not list %s models: %s", provider, ex)
+        return None
+    return models[0] if models else None
