@@ -101,7 +101,9 @@ _CACHE_STORE_VERSION = 1
 #   3 — real image media type sent; prompt no longer implies "old master
 #       painting", which made the model withhold graphic/contemporary works
 #   4 — a lone "not identified" with no candidate is re-sampled once
-_PIPELINE_REVISION = 4
+#   5 — web entities explained as unordered fragments (title / museum /
+#       artist), which the model may combine to pin down a work
+_PIPELINE_REVISION = 5
 _HTTP_TIMEOUT = 45  # seconds per external call
 # Output token budget for the confirmation reply. Must fit the whole JSON —
 # title + three prose fields in every LANGS language — or the reply is
@@ -406,10 +408,18 @@ def _build_llm_prompt(candidates: dict[str, list[str]]) -> str:
         f"- Best guess: {' / '.join(candidates.get('best_guess') or []) or '(none)'}\n"
         f"- Web entities: {', '.join(candidates.get('entities') or []) or '(none)'}\n"
         f"- Page titles: {' | '.join(candidates.get('pages') or []) or '(none)'}\n\n"
+        "The web entities are unordered FRAGMENTS, not a formatted answer: one "
+        "may be the title, another the museum that holds the work, another the "
+        "artist, mixed in with generic labels. Read them together — a title "
+        "plus a holding institution is often enough to pin down a specific "
+        "work you know.\n\n"
         "Your task, in this order:\n"
         "1. If a candidate is consistent with what you actually SEE in the "
         'image, confirm it: set "identified": true, name it in '
-        '"matched_candidate", and use your normal confidence.\n'
+        '"matched_candidate", and use your normal confidence. A fragment does '
+        "not have to arrive complete: if the fragments plus the image let you "
+        "name one specific work you know, that IS a confirmation — fill in the "
+        "artist and date yourself, and say which fragment you matched.\n"
         "2. The candidate list is often empty or generic, because reverse "
         "image search regularly fails on artwork. In that case you MAY still "
         "identify the work from your OWN knowledge, whenever you genuinely "
