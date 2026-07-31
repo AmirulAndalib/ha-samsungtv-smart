@@ -310,7 +310,9 @@ def denoise_candidates(candidates: dict[str, list[str]]) -> dict[str, list[str]]
     generic = [e for e in entities if e.strip().lower() in _GENERIC_ENTITIES]
     pages = [p for p in (candidates.get("pages") or []) if not _NOISE_PAGE_RE.search(p)]
     best_guess = [
-        b for b in (candidates.get("best_guess") or []) if b.strip().lower() not in _GENERIC_ENTITIES
+        b
+        for b in (candidates.get("best_guess") or [])
+        if b.strip().lower() not in _GENERIC_ENTITIES
     ]
     return {
         "best_guess": best_guess,
@@ -342,10 +344,10 @@ def _build_llm_prompt(candidates: dict[str, list[str]]) -> str:
         "image search regularly fails on artwork. In that case you MAY still "
         "identify the work from your OWN knowledge, but only if you genuinely "
         "recognise this specific piece — a famous painting you can name with "
-        "its artist. Then set \"identified\": true, leave "
+        'its artist. Then set "identified": true, leave '
         '"matched_candidate": null, and cap "confidence" at 0.6 to mark that '
         "no external source corroborates it.\n"
-        "3. If you do not recognise the work, set \"identified\": false and "
+        '3. If you do not recognise the work, set "identified": false and '
         "leave artist/date null. A recognisable STYLE, period or school is NOT "
         "recognising the work — do not guess a plausible title, and never "
         "attribute it to an artist merely because it looks like their manner.\n"
