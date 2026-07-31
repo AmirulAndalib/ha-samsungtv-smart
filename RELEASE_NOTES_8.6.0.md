@@ -161,6 +161,14 @@ So a high confidence still means "corroborated by the web", and anything at
 0.6 or below means "the model recognised it unaided" — the two remain
 distinguishable in the sensor attributes.
 
+**Past failures are retried instead of being served from cache.** A failed
+identification was cached for 14 days, so the artworks an improvement is
+written for were precisely the ones that could not benefit from it — the old
+"not identified" kept being replayed. Cached failures now carry the pipeline
+revision that produced them and are ignored once that logic changes, so the
+work is re-identified on the next artwork change. Confirmed identifications are
+untouched: they stay valid and are not re-fetched.
+
 ## Clearer failures
 
 Two error paths that used to mislead:
@@ -209,6 +217,8 @@ Two error paths that used to mislead:
   rather than failing silently on every artwork.
 - **Fix:** the gallery card uploads to a Frame that is actually reachable
   instead of falling back to the configured entity when only one is found.
+- **Fix:** a cached "not identified" is retried when the identification logic
+  changes, instead of masking the improvement for up to 14 days.
 - **Fix:** well-known artworks were reported unidentified when reverse image
   search returned only generic filler — the filler is now stripped, and the
   model may identify a work it recognises unaided (confidence capped at 0.6).

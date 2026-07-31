@@ -91,6 +91,14 @@ _GEMINI_URL_TMPL = (
 )
 
 _CACHE_STORE_VERSION = 1
+
+# Bumped whenever the prompt or the candidate handling changes in a way that
+# could turn a past failure into a success. Cached *misses* from an older
+# revision are ignored so the improvement applies on the next artwork change;
+# cached hits are untouched, since a confirmed identification stays valid.
+#   1 — original "confirm a candidate or nothing" prompt
+#   2 — candidate de-noising + identification from the model's own knowledge
+_PIPELINE_REVISION = 2
 _HTTP_TIMEOUT = 45  # seconds per external call
 # Output token budget for the confirmation reply. Must fit the whole JSON —
 # title + three prose fields in every LANGS language — or the reply is
@@ -174,11 +182,18 @@ class ArtIdentifyCache:
         """Return a non-expired cached result, or None.
 
         A hit (identified) is kept effectively forever; a miss is retried after
-        ``ART_CACHE_TTL_MISS``. Expired entries return None so the caller
-        re-runs the pipeline.
+        ``ART_CACHE_TTL_MISS``, or immediately if it was produced by an older
+        pipeline revision. Expired entries return None so the caller re-runs
+        the pipeline.
         """
         entry = self._data.get(key)
         if not entry:
+            return None
+        if not entry.get("identified") and entry.get("_rev") != _PIPELINE_REVISION:
+            # A failure recorded by an older prompt/candidate logic says nothing
+            # about the current one. Without this, improving identification had
+            # no visible effect for up to ART_CACHE_TTL_MISS (14 days) on
+            # exactly the artworks the improvement was written for.
             return None
         ttl = ART_CACHE_TTL_HIT if entry.get("identified") else ART_CACHE_TTL_MISS
         if time.time() - entry.get("_fetched_at", 0) > ttl:
@@ -191,6 +206,7 @@ class ArtIdentifyCache:
         """Store a fresh result (hit or miss) and persist it. Errors are not cached."""
         entry = {k: result.get(k) for k in RESULT_KEYS}
         entry["_fetched_at"] = time.time()
+        entry["_rev"] = _PIPELINE_REVISION
         self._data[key] = entry
         await self._store.async_save(self._data)
 
