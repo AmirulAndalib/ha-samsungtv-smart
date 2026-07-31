@@ -36,6 +36,7 @@ import base64
 import hashlib
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -243,6 +244,83 @@ async def async_vision_web_detection(
     }
 
 
+# Web entities Vision returns for practically every painting. They carry no
+# identifying power, but they pad the candidate list and make a genuinely
+# useful entity ("The Kimono", "Basket of Fruit") look like one item in a
+# wall of noise.
+_GENERIC_ENTITIES = frozenset(
+    {
+        "art",
+        "artist",
+        "artwork",
+        "acrylic paint",
+        "canvas",
+        "drawing",
+        "design",
+        "digital art",
+        "digital illustration",
+        "fine art",
+        "graphics",
+        "illustration",
+        "illustrator",
+        "image",
+        "landscape painting",
+        "modern art",
+        "oil painting",
+        "paint",
+        "painter",
+        "painting",
+        "photograph",
+        "photography",
+        "picture",
+        "portrait",
+        "poster",
+        "printmaking",
+        "still life",
+        "visual arts",
+        "watercolor painting",
+    }
+)
+
+# Page titles that match these are tutorials/listicles the image merely
+# resembles — Vision returns them when it has NOT found the picture anywhere.
+# Feeding them to the LLM as "the image appears on these pages" is actively
+# misleading.
+_NOISE_PAGE_RE = re.compile(
+    r"how to|tutorial|for beginners|beginners guide|tips|step by step|"
+    r"masterclass|guide to|the basics|basics of|painting technique|lesson|course|"
+    r"learn to|teaching you|level up|what is |youtube",
+    re.IGNORECASE,
+)
+
+
+def denoise_candidates(candidates: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Drop the generic filler from Vision's reply and promote the specifics.
+
+    Vision answers a failed reverse image search with plausible-looking
+    filler: entities like "Painting"/"Art" and pages like "How To Master
+    Painting With Zero Experience". Passed through verbatim, that filler both
+    buries the occasional real lead and makes an unidentified image look
+    well-sourced. Entities that name something concrete are moved to the
+    front; noise pages are removed entirely so an empty ``pages`` list
+    honestly signals "found nowhere".
+    """
+    entities = candidates.get("entities") or []
+    specific = [e for e in entities if e.strip().lower() not in _GENERIC_ENTITIES]
+    generic = [e for e in entities if e.strip().lower() in _GENERIC_ENTITIES]
+    pages = [p for p in (candidates.get("pages") or []) if not _NOISE_PAGE_RE.search(p)]
+    best_guess = [
+        b
+        for b in (candidates.get("best_guess") or [])
+        if b.strip().lower() not in _GENERIC_ENTITIES
+    ]
+    return {
+        "best_guess": best_guess,
+        "entities": specific + generic,
+        "pages": pages,
+    }
+
+
 def _build_llm_prompt(candidates: dict[str, list[str]]) -> str:
     """Prompt that hands the reverse-search candidates to the LLM for checking.
 
@@ -258,11 +336,24 @@ def _build_llm_prompt(candidates: dict[str, list[str]]) -> str:
         f"- Best guess: {' / '.join(candidates.get('best_guess') or []) or '(none)'}\n"
         f"- Web entities: {', '.join(candidates.get('entities') or []) or '(none)'}\n"
         f"- Page titles: {' | '.join(candidates.get('pages') or []) or '(none)'}\n\n"
-        "Your task: confirm the identification ONLY if a candidate is consistent "
-        "with what you actually SEE in the image. If none matches, set "
-        '"identified": false and leave artist/date null and translations {}. '
+        "Your task, in this order:\n"
+        "1. If a candidate is consistent with what you actually SEE in the "
+        'image, confirm it: set "identified": true, name it in '
+        '"matched_candidate", and use your normal confidence.\n'
+        "2. The candidate list is often empty or generic, because reverse "
+        "image search regularly fails on artwork. In that case you MAY still "
+        "identify the work from your OWN knowledge, but only if you genuinely "
+        "recognise this specific piece — a famous painting you can name with "
+        'its artist. Then set "identified": true, leave '
+        '"matched_candidate": null, and cap "confidence" at 0.6 to mark that '
+        "no external source corroborates it.\n"
+        '3. If you do not recognise the work, set "identified": false and '
+        "leave artist/date null. A recognisable STYLE, period or school is NOT "
+        "recognising the work — do not guess a plausible title, and never "
+        "attribute it to an artist merely because it looks like their manner.\n"
         "Do NOT invent facts. Separate the visual description from the factual "
-        "identification. confidence is a number from 0 to 1.\n"
+        "identification. confidence is a number from 0 to 1. Always fill "
+        "visual_description, even when the work is not identified.\n"
         f"Provide title, artwork_description, artist_biography and "
         f"visual_description in ALL these languages: {langs}. artist, date and "
         "suggested_search_query stay in one language (English). Translate the "
@@ -622,7 +713,9 @@ async def async_identify(
     img_b64 = base64.b64encode(image_bytes).decode()
     started = time.monotonic()
     try:
-        candidates = await async_vision_web_detection(session, vision_key, img_b64)
+        candidates = denoise_candidates(
+            await async_vision_web_detection(session, vision_key, img_b64)
+        )
         _LOGGER.debug(
             "Artwork %s: Vision candidates best_guess=%s | entities=%s | pages=%s",
             key,
