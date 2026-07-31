@@ -161,6 +161,24 @@ So a high confidence still means "corroborated by the web", and anything at
 0.6 or below means "the model recognised it unaided" — the two remain
 distinguishable in the sensor attributes.
 
+**The Art Store is not a museum of oil paintings.** Even once it could answer
+freely, the model kept declining on graphic works — its own description gave
+the reason: *"looks like a modern icon or doodle rather than a traditional
+painting"*. It was echoing the instruction, which asked it to recognise "a
+famous painting". The catalogue is full of photography, prints, posters,
+street art, cartoons and contemporary illustration, so the prompt now says so
+explicitly, and an artist's named signature motif counts as an
+identification. The refusal rule is unchanged: recognising a style is still
+not recognising the work.
+
+**The thumbnail is sent with its real media type.** Every provider was told
+`image/jpeg` unconditionally, but a Frame thumbnail is stored as
+`current.jpg` whatever the TV actually sent — the Art API reports the true
+type in its header. A PNG or WebP announced as JPEG is undefined behaviour,
+and it showed: the model described a winged figure as *"a small dog-like
+figure, crouched or mid-run"*. The type is now sniffed from the bytes, and
+the description came back correct.
+
 **Past failures are retried instead of being served from cache.** A failed
 identification was cached for 14 days, so the artworks an improvement is
 written for were precisely the ones that could not benefit from it — the old
