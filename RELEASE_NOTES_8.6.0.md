@@ -74,6 +74,30 @@ Three changes:
   five-language reply needs comfortably.
 - **JSON mode uses the documented REST spelling** (`responseMimeType`).
 
+## The same hardening for OpenAI and Anthropic
+
+Truncation is not a Gemini quirk — OpenAI's reasoning models (o-series, gpt-5)
+also spend reasoning tokens from `max_completion_tokens`, and any model can be
+cut short by a budget that is too tight. So instead of inferring truncation
+from a parse error after the fact, the integration now reads **the provider's
+own stop signal**:
+
+| provider | field | truncated when |
+|---|---|---|
+| Anthropic | `stop_reason` | `max_tokens` |
+| OpenAI | `choices[].finish_reason` | `length` |
+| Gemini | `candidates[].finishReason` | `MAX_TOKENS` |
+
+The raised output budget (8 000 tokens) and the model-discovery dropdown apply
+to all three providers as well — only the thinking switch is Gemini-specific,
+because it is the only one of the three that reasons by default on this call.
+
+> **A note on Anthropic:** prefilling the assistant turn with `{` is the classic
+> trick for forcing JSON, but it is no longer supported on Claude 4.6 / Sonnet
+> 4.5 and later — adopting it would have re-created exactly the kind of
+> obsolescence this release fixes. Claude keeps the prompt-driven JSON contract,
+> now backed by explicit truncation detection.
+
 ## Clearer failures
 
 Two error paths that used to mislead:
@@ -112,7 +136,8 @@ Two error paths that used to mislead:
   raised ([#188](https://github.com/TheFab21/ha-samsungtv-smart/issues/188)).
 - **Fix:** Gemini JSON mode uses the documented REST field name
   (`responseMimeType`).
-- **Fix:** a truncated LLM reply is reported as such, instead of a misleading
-  JSON delimiter error.
+- **Fix:** truncation is detected from each provider's own stop signal
+  (`stop_reason` / `finish_reason` / `finishReason`) and reported as such,
+  instead of a misleading JSON delimiter error.
 - **Fix:** an unavailable model raises a dedicated error listing usable models
   rather than failing silently on every artwork.

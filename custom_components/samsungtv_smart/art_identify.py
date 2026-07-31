@@ -438,6 +438,8 @@ async def async_llm_confirm(
             raise LLMError(f"{provider} API {resp.status}: {text[:200]}")
         data = await resp.json()
 
+    _raise_if_truncated(provider, model, data)
+
     if provider == "anthropic":
         blocks = data.get("content") or []
         raw = next((b.get("text", "") for b in blocks if b.get("type") == "text"), "")
@@ -451,6 +453,34 @@ async def async_llm_confirm(
     _LOGGER.debug("LLM (%s/%s) raw reply: %s", provider, model, raw[:600])
     parsed = _parse_llm_json(raw)
     return _normalize_result(parsed)
+
+
+def _raise_if_truncated(provider: str, model: str, data: dict[str, Any]) -> None:
+    """Fail loudly when the provider says it stopped at the token limit.
+
+    Every provider reports this in its own field, and all three can hit it the
+    same way: reasoning/thinking tokens are drawn from the reply budget, so a
+    model that reasons a lot returns a JSON object cut mid-structure. Reading
+    the provider's own signal is far more reliable than inferring it from a
+    parse error after the fact (issue #188).
+    """
+    if provider == "anthropic":
+        reason = data.get("stop_reason")
+        truncated = reason == "max_tokens"
+    elif provider == "gemini":
+        reason = (data.get("candidates") or [{}])[0].get("finishReason")
+        truncated = reason == "MAX_TOKENS"
+    else:  # openai
+        reason = (data.get("choices") or [{}])[0].get("finish_reason")
+        truncated = reason == "length"
+
+    if truncated:
+        raise LLMError(
+            f"{provider} model {model!r} hit its output limit "
+            f"({_LLM_MAX_TOKENS} tokens) before finishing the JSON "
+            f"(stop reason {reason!r}). Pick a lighter model — reasoning "
+            f"models spend this budget thinking before they answer."
+        )
 
 
 def _normalize_result(parsed: dict[str, Any]) -> dict[str, Any]:
