@@ -179,6 +179,19 @@ and it showed: the model described a winged figure as *"a small dog-like
 figure, crouched or mid-run"*. The type is now sniffed from the bytes, and
 the description came back correct.
 
+**Web entities are explained for what they are: fragments.** Vision returns an
+unordered bag — a title here, a holding museum there, the artist somewhere
+else, mixed with generic labels. Presented as a flat "candidate" list, the
+model treated each one as a whole answer to accept or reject, and rejected
+them all. For William Merritt Chase's *The Kimono* it was handed
+`The Kimono` **and** `Thyssen-Bornemisza National Museum` — the title and the
+museum that actually holds it — and still declined four times out of four,
+explaining that *"the specific work is not confidently recognizable"*. The
+prompt now says the entities are fragments to be read together, and that
+naming one specific work from fragments plus the image counts as a
+confirmation, with the artist and date filled in from the model's own
+knowledge.
+
 **A lone "not identified" is checked twice.** When there is no candidate to
 confirm, the answer rests entirely on what the model recalls — and that is not
 deterministic. On one artwork, everything else held constant, four runs gave
