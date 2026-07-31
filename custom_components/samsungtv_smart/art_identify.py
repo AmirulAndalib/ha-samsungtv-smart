@@ -100,7 +100,8 @@ _CACHE_STORE_VERSION = 1
 #   2 — candidate de-noising + identification from the model's own knowledge
 #   3 — real image media type sent; prompt no longer implies "old master
 #       painting", which made the model withhold graphic/contemporary works
-_PIPELINE_REVISION = 3
+#   4 — a lone "not identified" with no candidate is re-sampled once
+_PIPELINE_REVISION = 4
 _HTTP_TIMEOUT = 45  # seconds per external call
 # Output token budget for the confirmation reply. Must fit the whole JSON —
 # title + three prose fields in every LANGS language — or the reply is
@@ -273,7 +274,14 @@ _GENERIC_ENTITIES = frozenset(
         "artwork",
         "acrylic paint",
         "canvas",
+        "cartoon",
+        "clip art",
+        "doodle",
         "drawing",
+        "graphic design",
+        "line art",
+        "logo",
+        "sketch",
         "design",
         "digital art",
         "digital illustration",
@@ -366,6 +374,21 @@ def media_type_from_b64(img_b64: str) -> str:
         if img_b64.startswith(prefix):
             return media_type
     return "image/jpeg"
+
+
+def _has_usable_candidate(candidates: dict[str, list[str]]) -> bool:
+    """True if the reverse search produced anything the LLM can confirm.
+
+    After de-noising, a candidate set made only of generic entities carries no
+    identifying power: the model is answering from memory alone, and a "no" is
+    then a judgement call rather than a rejection of a concrete name.
+    """
+    if candidates.get("best_guess"):
+        return True
+    return any(
+        e.strip().lower() not in _GENERIC_ENTITIES
+        for e in (candidates.get("entities") or [])
+    )
 
 
 def _build_llm_prompt(candidates: dict[str, list[str]]) -> str:
@@ -784,6 +807,22 @@ async def async_identify(
         result = await async_llm_confirm(
             session, provider, llm_key, model, img_b64, candidates
         )
+        if not result.get("identified") and not _has_usable_candidate(candidates):
+            # No candidate to check against, so the answer rests entirely on
+            # what the model recalls — and that is not deterministic. Observed
+            # on one artwork with everything else held constant: four runs,
+            # two "not identified", two correct (Keith Haring, confidence
+            # 0.58-0.60). Temperature cannot be lowered to fix it, since the
+            # reasoning models only accept the default. So take one more
+            # sample: a second "no" is evidence, a lone "no" was a coin toss.
+            # Only on failure, and only when there was nothing to confirm, so
+            # the common paths cost exactly one call as before.
+            _LOGGER.debug("Artwork %s: unidentified with no candidates — retrying", key)
+            retry = await async_llm_confirm(
+                session, provider, llm_key, model, img_b64, candidates
+            )
+            if retry.get("identified"):
+                result = retry
     except (VisionError, LLMError, ClientError, TimeoutError, ValueError) as err:
         _LOGGER.warning("Artwork identification failed for %s: %s", key, err)
         return {

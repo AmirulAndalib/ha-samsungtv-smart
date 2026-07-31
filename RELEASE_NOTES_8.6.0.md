@@ -179,6 +179,16 @@ and it showed: the model described a winged figure as *"a small dog-like
 figure, crouched or mid-run"*. The type is now sniffed from the bytes, and
 the description came back correct.
 
+**A lone "not identified" is checked twice.** When there is no candidate to
+confirm, the answer rests entirely on what the model recalls — and that is not
+deterministic. On one artwork, everything else held constant, four runs gave
+two refusals and two correct identifications (Keith Haring, confidence
+0.58–0.60). Temperature cannot be lowered to settle it: the current reasoning
+models only accept the default. So when the model declines *and* the reverse
+search produced nothing to check against, one more sample is taken — a second
+refusal is evidence, a single one was a coin toss. Every other path still costs
+exactly one call.
+
 **Past failures are retried instead of being served from cache.** A failed
 identification was cached for 14 days, so the artworks an improvement is
 written for were precisely the ones that could not benefit from it — the old
