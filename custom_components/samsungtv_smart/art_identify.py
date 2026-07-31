@@ -337,6 +337,35 @@ def denoise_candidates(candidates: dict[str, list[str]]) -> dict[str, list[str]]
     }
 
 
+# Base64 prefixes of the magic bytes of the formats a Frame thumbnail can be
+# in. Every thumbnail is saved as ``current.jpg`` whatever the TV actually
+# sent (the Art API reports the real type in its header), so the extension is
+# not evidence of the content.
+_B64_MAGIC = (
+    ("/9j/", "image/jpeg"),
+    # Only the bytes that are constant in the signature: base64 encodes three
+    # bytes per four characters, so a longer prefix would start depending on
+    # the payload and stop matching.
+    ("iVBORw0K", "image/png"),
+    ("R0lG", "image/gif"),
+    ("UklGR", "image/webp"),
+)
+
+
+def media_type_from_b64(img_b64: str) -> str:
+    """Return the real image media type, sniffed from the encoded bytes.
+
+    All three providers are told the media type explicitly; announcing
+    ``image/jpeg`` for a PNG is at best undefined behaviour and at worst a
+    rejected request. Falls back to JPEG, which is what a Frame thumbnail
+    usually is.
+    """
+    for prefix, media_type in _B64_MAGIC:
+        if img_b64.startswith(prefix):
+            return media_type
+    return "image/jpeg"
+
+
 def _build_llm_prompt(candidates: dict[str, list[str]]) -> str:
     """Prompt that hands the reverse-search candidates to the LLM for checking.
 
@@ -474,6 +503,7 @@ async def async_llm_confirm(
     chat APIs. Raises on transport/parse failure (not cached).
     """
     prompt = _build_llm_prompt(candidates)
+    media_type = media_type_from_b64(img_b64)
     if provider == "anthropic":
         headers = {
             "x-api-key": api_key,
@@ -491,7 +521,7 @@ async def async_llm_confirm(
                             "type": "image",
                             "source": {
                                 "type": "base64",
-                                "media_type": "image/jpeg",
+                                "media_type": media_type,
                                 "data": img_b64,
                             },
                         },
@@ -532,7 +562,7 @@ async def async_llm_confirm(
                         {"type": "text", "text": prompt},
                         {
                             "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"},
+                            "image_url": {"url": f"data:{media_type};base64,{img_b64}"},
                         },
                     ],
                 }
@@ -548,7 +578,7 @@ async def async_llm_confirm(
                         {"text": prompt},
                         {
                             "inline_data": {
-                                "mime_type": "image/jpeg",
+                                "mime_type": media_type,
                                 "data": img_b64,
                             }
                         },
