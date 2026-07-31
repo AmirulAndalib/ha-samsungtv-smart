@@ -3513,6 +3513,18 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             except Exception:  # noqa: BLE001 - best effort probe
                 pass
 
+        # Off, or gone. Tell the two apart before spending 10s trying to wake
+        # something that will never answer: a Frame in standby still serves its
+        # REST endpoint, an unplugged or faulty one does not. Without this an
+        # upload to a dead TV simply hung with nothing in the UI to explain it.
+        if await self._async_load_device_info(force=True) is None:
+            self._log.warning(
+                "Frame Art: %s is unreachable — cannot upload. Check the TV is "
+                "powered at the mains and on the network.",
+                self._host,
+            )
+            return False
+
         # Genuinely off: power it on, then leave the mode alone.
         ip_client = self._get_ip_control_client()
         if ip_client is not None:
@@ -3717,7 +3729,7 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
 
         # Only needs the art app reachable — do not force Art Mode on.
         if not await self._ensure_tv_awake_for_art():
-            return {"error": "Failed to turn on TV"}
+            return {"error": "TV unreachable or could not be turned on"}
 
         try:
             # Check if file exists
@@ -3798,7 +3810,7 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             return {"error": "Frame TV not supported"}
         # Writing to the art library does not require the panel to show art.
         if not await self._ensure_tv_awake_for_art():
-            return {"error": "Failed to turn on TV"}
+            return {"error": "TV unreachable or could not be turned on"}
 
         from .api._upload_sidecar import list_images
 
