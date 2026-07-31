@@ -1317,6 +1317,57 @@ class OptionsFlowHandler(OptionsFlow):
             ],
         )
 
+    async def _async_llm_model_selector(self, data):
+        """Model field: a live dropdown when the provider can be queried.
+
+        Falls back to free text when no key is stored yet or the provider is
+        unreachable — the field must never become un-fillable just because the
+        network is down. ``custom_value`` stays on so a model missing from the
+        list (brand new, or a fine-tune) can still be typed in.
+        """
+        from .art_identify import async_list_models  # noqa: PLC0415 - lazy
+
+        provider = data.get(CONF_ART_LLM_PROVIDER)
+        api_key = data.get(CONF_ART_LLM_API_KEY)
+        if not provider or not api_key:
+            return str
+
+        try:
+            models = await async_list_models(
+                async_get_clientsession(self.hass), provider, api_key
+            )
+        except Exception as ex:  # noqa: BLE001 - never block the form
+            _LOGGER.debug("Could not list %s models for the form: %s", provider, ex)
+            return str
+
+        if not models:
+            return str
+
+        current = data.get(CONF_ART_LLM_MODEL)
+        if current and current not in models:
+            # Keep a retired/pinned model selectable so the form shows the
+            # truth instead of silently swapping it for something else.
+            models = [current, *models]
+        return SelectSelector(
+            SelectSelectorConfig(
+                options=[SelectOptionDict(value=m, label=m) for m in models],
+                mode=SelectSelectorMode.DROPDOWN,
+                custom_value=True,
+            )
+        )
+
+    async def _async_pick_llm_model(self, data) -> str | None:
+        """Best model for the configured provider/key, or None if unknown."""
+        from .art_identify import async_pick_default_model  # noqa: PLC0415 - lazy
+
+        provider = data.get(CONF_ART_LLM_PROVIDER)
+        api_key = data.get(CONF_ART_LLM_API_KEY)
+        if not provider or not api_key:
+            return None
+        return await async_pick_default_model(
+            async_get_clientsession(self.hass), provider, api_key
+        )
+
     async def async_step_art_identify(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -1349,7 +1400,14 @@ class OptionsFlowHandler(OptionsFlow):
                 if value:
                     new_data[key] = value
                 elif key == CONF_ART_LLM_MODEL:
-                    new_data.pop(key, None)  # blank model -> fall back to default
+                    # Blank model: resolve the best model this key can
+                    # actually use, rather than pinning a constant that the
+                    # provider will eventually retire (issue #188).
+                    picked = await self._async_pick_llm_model(new_data)
+                    if picked:
+                        new_data[key] = picked
+                    else:
+                        new_data.pop(key, None)
             self.hass.config_entries.async_update_entry(entry, data=new_data)
             return await self.async_step_menu()
 
@@ -1374,7 +1432,7 @@ class OptionsFlowHandler(OptionsFlow):
             vol.Optional(
                 CONF_ART_LLM_MODEL,
                 default=data.get(CONF_ART_LLM_MODEL, ""),
-            ): str,
+            ): await self._async_llm_model_selector(data),
             vol.Required(
                 CONF_ART_IDENTIFY_PERSONAL,
                 default=data.get(CONF_ART_IDENTIFY_PERSONAL, False),
