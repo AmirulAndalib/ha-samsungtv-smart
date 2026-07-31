@@ -278,6 +278,44 @@ def _build_llm_prompt(candidates: dict[str, list[str]]) -> str:
     )
 
 
+def _anthropic_output_schema() -> dict[str, Any]:
+    """JSON Schema for the identification reply, in Anthropic's strict dialect.
+
+    Built from the key tuples above so it can never drift from what
+    ``_normalize_result`` expects. Three constraints the API enforces:
+    ``additionalProperties: false`` on every object, no recursion, and no
+    numeric/length keywords (``minimum``, ``minLength``, ...) — so the shape is
+    expressed with types and ``required`` alone.
+    """
+    translated = {
+        "type": "object",
+        "properties": {
+            field: {"type": ["string", "null"]} for field in TRANSLATED_FIELDS
+        },
+        "required": list(TRANSLATED_FIELDS),
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "identified": {"type": "boolean"},
+            "confidence": {"type": ["number", "null"]},
+            "matched_candidate": {"type": ["string", "null"]},
+            "artist": {"type": ["string", "null"]},
+            "date": {"type": ["string", "null"]},
+            "suggested_search_query": {"type": ["string", "null"]},
+            "translations": {
+                "type": "object",
+                "properties": {lang: translated for lang in LANGS},
+                "required": list(LANGS),
+                "additionalProperties": False,
+            },
+        },
+        "required": [*TOP_LEVEL_KEYS, "translations"],
+        "additionalProperties": False,
+    }
+
+
 def _parse_llm_json(raw: str) -> dict[str, Any]:
     """Extract the JSON object from an LLM reply, tolerating stray fences/prose.
 
@@ -354,6 +392,16 @@ async def async_llm_confirm(
                     ],
                 }
             ],
+            # Structured outputs (GA, no beta header): the API constrains the
+            # reply to this schema instead of us hoping the prompt was obeyed.
+            # Dropped and retried without it on models that predate the feature
+            # — see the 400 handling below.
+            "output_config": {
+                "format": {
+                    "type": "json_schema",
+                    "schema": _anthropic_output_schema(),
+                }
+            },
         }
         url = _ANTHROPIC_URL
     elif provider == "openai":
@@ -414,11 +462,35 @@ async def async_llm_confirm(
     else:
         raise LLMError(f"unknown LLM provider: {provider!r}")
 
-    async with session.post(
-        url, json=body, headers=headers, timeout=_HTTP_TIMEOUT
-    ) as resp:
-        if resp.status != 200:
+    # Two attempts at most: the retry exists only to drop `output_config` for a
+    # model that predates structured outputs. Everything else fails on the
+    # first pass.
+    for attempt in (1, 2):
+        async with session.post(
+            url, json=body, headers=headers, timeout=_HTTP_TIMEOUT
+        ) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                break
+
             text = await resp.text()
+            # An older Claude rejects output_config with a 400. Drop it and
+            # retry — the prompt still asks for the same JSON, so we degrade to
+            # the previous contract instead of failing outright.
+            if (
+                attempt == 1
+                and resp.status == 400
+                and "output_config" in body
+                and "output_config" in text
+            ):
+                _LOGGER.debug(
+                    "Art identify: %s rejected structured outputs, retrying "
+                    "with the prompt-only JSON contract",
+                    model,
+                )
+                body.pop("output_config", None)
+                continue
+
             # A retired or mistyped model is a configuration problem, not a
             # transient failure: retrying it forever just burns quota and
             # leaves a cryptic 404 in the log. Name the alternatives instead.
@@ -436,7 +508,6 @@ async def async_llm_confirm(
                     f"Identification."
                 )
             raise LLMError(f"{provider} API {resp.status}: {text[:200]}")
-        data = await resp.json()
 
     _raise_if_truncated(provider, model, data)
 
