@@ -110,6 +110,24 @@ than trusting the prompt:
 > it with a `400`; that case is detected and retried once without it, falling
 > back to the prompt-driven contract instead of failing.
 
+## Uploading to a Frame that is not there
+
+Two problems compounded when one TV of several was unreachable.
+
+**The gallery card sent uploads to the wrong Frame.** It discovers Frames by
+looking for the `art_mode_status` attribute, which an unreachable TV does not
+expose — so with two configured and one down, discovery returned a single
+Frame. That failed the "more than one, ask the user" test, so no chooser
+appeared and the card fell back to the entity named in the card's YAML: the
+very TV discovery had just excluded for being unreachable. Now a single
+discovered Frame is used directly; two or more still open the chooser.
+
+**And the upload then hung silently.** `art_upload` tried to wake the TV,
+waited on a power-on that could never complete, and reported nothing. The
+integration now tells a TV in standby (which still answers its REST endpoint)
+apart from one that is unplugged or faulty (which does not), and fails straight
+away with *"<host> is unreachable — cannot upload"* instead of stalling.
+
 ## Clearer failures
 
 Two error paths that used to mislead:
@@ -156,3 +174,7 @@ Two error paths that used to mislead:
   instead of a misleading JSON delimiter error.
 - **Fix:** an unavailable model raises a dedicated error listing usable models
   rather than failing silently on every artwork.
+- **Fix:** the gallery card uploads to a Frame that is actually reachable
+  instead of falling back to the configured entity when only one is found.
+- **Fix:** an upload to an unreachable TV fails immediately with a clear
+  message instead of hanging on a power-on that cannot happen.
