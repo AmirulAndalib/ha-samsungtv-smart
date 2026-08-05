@@ -8,7 +8,7 @@ from datetime import timedelta
 from enum import Enum
 import logging
 
-from aiohttp import ClientSession
+from aiohttp import ClientResponseError, ClientSession
 from pysmartthings import SmartThings
 
 from homeassistant.util import Throttle
@@ -1028,7 +1028,17 @@ class SmartThingsTV:
 
         any_sent = False
         failures: list[str] = []
+        # Capabilities this device has already refused as unsupported. The
+        # matrix tries each capability twice (name form, id form); a 422 is a
+        # verdict on the capability itself, so the second form is a wasted
+        # request -- and wasted requests are what push SmartThings into rate
+        # limiting (#197: a UE50RU7172 answered 422 for samsungvd.pictureMode
+        # and 409 for custom.picturemode, then 429 for everything once the
+        # four-request matrix had run a few times).
+        unsupported: set[str] = set()
         for capability, form in attempts:
+            if capability in unsupported:
+                continue
             argument = forms[form]
             try:
                 await self._send_rest_command(
@@ -1048,6 +1058,21 @@ class SmartThingsTV:
                 # Reporting only "failed via any capability/form" (#197) left
                 # nothing to act on without turning on debug logging first.
                 failures.append(f"{capability} ({form}={argument!r}): {err}")
+                status = (
+                    getattr(err, "status", None)
+                    if isinstance(err, ClientResponseError)
+                    else None
+                )
+                if status == 429:
+                    # Rate limited. Every remaining attempt would fail the same
+                    # way and dig the hole deeper, so stop here.
+                    self._log.warning(
+                        "SmartThings is rate limiting this device (429) — "
+                        "abandoning the remaining picture mode attempts"
+                    )
+                    break
+                if status == 422:
+                    unsupported.add(capability)
                 continue
             self._log.debug(
                 "Picture mode '%s' sent via %s (%s form: %s)",
