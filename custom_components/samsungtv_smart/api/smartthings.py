@@ -521,6 +521,11 @@ class SmartThingsTV:
                             m_id = m_name = entry
                         else:
                             continue
+                        # Samsung's localized names arrive padded in some
+                        # locales (" Prirodzený", " Dynamický" -- see #197).
+                        # A leading space is not part of the name: it would
+                        # show in the UI and be sent back as the argument.
+                        m_name = m_name.strip() or m_id
                         if m_id:
                             new_map[m_name] = m_id
                     if new_map:
@@ -531,7 +536,10 @@ class SmartThingsTV:
             if not self._picture_mode_list:
                 _sk = "supportedPictureModes"
                 if _sk in picture_mode_cap:
-                    self._picture_mode_list = picture_mode_cap[_sk].value
+                    self._picture_mode_list = [
+                        m.strip() if isinstance(m, str) else m
+                        for m in (picture_mode_cap[_sk].value or [])
+                    ] or None
 
             # If pysmartthings did not expose supportedPictureModesMap,
             # fetch it directly from the REST capability status endpoint.
@@ -612,6 +620,11 @@ class SmartThingsTV:
                             m_id = m_name = entry
                         else:
                             continue
+                        # Samsung's localized names arrive padded in some
+                        # locales (" Prirodzený", " Dynamický" -- see #197).
+                        # A leading space is not part of the name: it would
+                        # show in the UI and be sent back as the argument.
+                        m_name = m_name.strip() or m_id
                         if m_id:
                             new_map[m_name] = m_id
                     if new_map:
@@ -1014,6 +1027,7 @@ class SmartThingsTV:
             _add(capability, "id")
 
         any_sent = False
+        failures: list[str] = []
         for capability, form in attempts:
             argument = forms[form]
             try:
@@ -1030,6 +1044,10 @@ class SmartThingsTV:
                     argument,
                     err,
                 )
+                # Kept so the final error can say WHY every attempt failed.
+                # Reporting only "failed via any capability/form" (#197) left
+                # nothing to act on without turning on debug logging first.
+                failures.append(f"{capability} ({form}={argument!r}): {err}")
                 continue
             self._log.debug(
                 "Picture mode '%s' sent via %s (%s form: %s)",
@@ -1068,7 +1086,10 @@ class SmartThingsTV:
 
         if not any_sent:
             self._log.error(
-                "Failed to set picture mode '%s' via any capability/form", mode
+                "Failed to set picture mode '%s' — every attempt was rejected "
+                "by SmartThings: %s",
+                mode,
+                "; ".join(failures) or "no attempt was made",
             )
         else:
             # All accepted-but-unapplied (or the last one unverifiable).
