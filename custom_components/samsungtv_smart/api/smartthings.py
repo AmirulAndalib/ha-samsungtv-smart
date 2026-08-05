@@ -235,6 +235,16 @@ class SmartThingsTV:
         """Return picture mode list."""
         return self._picture_mode_list
 
+    @property
+    def picture_mode_map(self) -> dict[str, str]:
+        """Return the display name -> internal id map for picture modes.
+
+        The ids (``modeStandard``, ``modeMovie``, ...) are the only
+        language-independent handle on a picture mode; the display names are
+        localized by the TV.
+        """
+        return dict(self._picture_mode_map)
+
     def get_source_name(self, source_key: str) -> str:
         """Get source name from key."""
         if not self._source_list_map or source_key not in self._source_list_map:

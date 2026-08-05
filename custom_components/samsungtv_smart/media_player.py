@@ -3312,7 +3312,20 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
                 pass
 
         # 2. Also send WS key as fallback (bypasses HDMI restrictions)
-        ws_key = _PICTURE_MODE_KEYS.get(picture_mode.lower())
+        #
+        # Look the key up by the INTERNAL ID first ("modeStandard", ...), and
+        # only then by the display name. The names above cover English, French
+        # and German; every other locale missed entirely, so the local fallback
+        # never fired exactly where it is needed most — on #197 (Slovak) the
+        # cloud rejected setPictureMode with 409 and only "Film" happened to
+        # match, leaving Dynamický / Štandardný / Prirodzený with no path at
+        # all. The id is language-independent, so this covers every locale.
+        mode_id = ""
+        if self._st:
+            mode_id = self._st.picture_mode_map.get(picture_mode, "")
+        ws_key = _PICTURE_MODE_KEYS.get(mode_id.lower()) or _PICTURE_MODE_KEYS.get(
+            picture_mode.lower()
+        )
         if ws_key:
             await self.async_send_command(ws_key)
             self._log.debug(
