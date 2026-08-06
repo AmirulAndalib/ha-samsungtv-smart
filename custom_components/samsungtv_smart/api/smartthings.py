@@ -322,6 +322,24 @@ class SmartThingsTV:
                 resp.status,
                 result,
             )
+            # HTTP 200 only means SmartThings accepted the request; the body
+            # says whether the device executed it. A FAILED result here means
+            # the TV is registered in the cloud but not reachable by it --
+            # typically because the TV itself cannot reach Samsung's servers
+            # (blocked DNS, firewall). That looked like success in the log
+            # while nothing happened on the panel (#197), so say it plainly.
+            if any(
+                (item or {}).get("status") == "FAILED"
+                for item in (result or {}).get("results", [])
+            ):
+                self._log.warning(
+                    "SmartThings accepted %s/%s but the TV did not execute it "
+                    "(result: FAILED) — the TV is registered in the cloud but "
+                    "the cloud cannot reach it. Check the TV's own internet "
+                    "access (DNS/ad-blocking rules on samsung* domains).",
+                    capability,
+                    command,
+                )
 
     async def _update_source_list(self, main_comp: dict) -> None:
         """Update source list from device status, with custom name support.
