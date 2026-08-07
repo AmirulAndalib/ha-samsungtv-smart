@@ -27,15 +27,18 @@ This fork brings improved WebSocket stability, full Samsung Frame TV Art Mode su
   - [Options](#options)
   - [Reconfigure](#reconfigure)
 - [Entities](#entities)
+  - [Detecting Art Mode vs. watching TV](#detecting-art-mode-vs-watching-tv)
 - [Services](#services)
   - [Standard TV Services](#standard-tv-services)
   - [Frame Art Services](#frame-art-services)
 - [Frame Art Mode](#frame-art-mode)
+  - [What happens to your image](#what-happens-to-your-image)
   - [Thumbnail Downloads](#thumbnail-downloads)
   - [Artwork Identification](#artwork-identification)
 - [Automations & Tips](#automations--tips)
 - [Troubleshooting](#troubleshooting)
   - [Integration not appearing in Add Integration](#integration-not-appearing-in-add-integration)
+  - [Picture mode does not change the TV at all](#picture-mode-does-not-change-the-tv-at-all)
   - [IP Control reports Art Mode "on" when it isn't](#ip-control-reports-art-mode-on-when-it-isnt)
 - [Credits](#credits)
 
@@ -52,6 +55,7 @@ This fork brings improved WebSocket stability, full Samsung Frame TV Art Mode su
 - **Artwork identification (opt-in)** — reverse image search (Google Vision) confirmed by an LLM (Claude / OpenAI / Gemini) shows the title, artist, date and bio of the art on your Frame, in 5 languages
 - New dedicated entities: Art Mode switch and Frame Art sensor
 - **Picture mode control** — `select` entity with dual-strategy (SmartThings API + WS fallback for HDMI inputs)
+- **Audio output selection** — `select` entity for TV speaker / external / **Q-Symphony** when a compatible Samsung soundbar is paired
 - **Improved source detection** — REST fallback for Frame 2024 TVs where `supportedInputSources` returns empty; supports custom source names
 - **App name resolution** — unknown SmartThings app IDs are parsed and resolved to display names
 - Improved WebSocket connection stability — prevents zombie connections and saturation
@@ -60,6 +64,7 @@ This fork brings improved WebSocket stability, full Samsung Frame TV Art Mode su
 - Logo fetching for apps and sources
 - `folder-gallery-card` Lovelace card bundled — no manual installation required
 - `samsung-art-upload-card` Lovelace card bundled — pick an image on any device (phone, laptop) and push it straight to the Frame in one tap
+- **Uploads are prepared for the panel** — baseline JPEG, fitted to your screen resolution (8K and portrait included), EXIF rotation applied, **HEIC/HEIF from iPhone accepted**, and never switching the TV away from what you are watching
 
 ---
 
@@ -339,7 +344,16 @@ Each configured TV creates the following entities:
 | `switch.<tv_name>_art_mode` | Switch | Toggle Art Mode on/off (Frame TVs only) |
 | `sensor.<tv_name>_frame_art` | Sensor | Currently displayed artwork info (Frame TVs only) |
 | `sensor.<tv_name>_personal` / `_store` / `_other` | Sensor | Thumbnail folder size (MB) per subdirectory, with a `file_list` attribute for gallery cards (Frame TVs only, auto-created in v7) |
+| `sensor.<tv_name>_art_metadata` | Sensor | Title, artist and description of the current artwork (Frame TVs, requires [Artwork Identification](#artwork-identification)) |
 | `select.<tv_name>_picture_mode` | Select | Change picture mode (Standard, Movie, etc.) |
+| `select.<tv_name>_color_tone` | Select | Colour tone / white balance preset |
+| `select.<tv_name>_speaker_select` | Select | Audio output — TV speaker, external, or Q-Symphony when a compatible soundbar is paired |
+| `select.<tv_name>_matte_type` / `_matte_color` | Select | Art Mode matte style and colour (Frame TVs only) |
+| `select.<tv_name>_motion_sensitivity` / `_motion_timer` / `_brightness_sensor` | Select | Frame motion detector and ambient light sensor settings |
+| `number.<tv_name>_art_mode_brightness` / `_art_mode_color_temperature` | Number | Art Mode panel brightness and colour temperature (Frame TVs only) |
+| `number.<tv_name>_backlight` | Number | Panel backlight level |
+| `button.<tv_name>_reboot` | Button | Reboot the TV |
+| `remote.<tv_name>` | Remote | Send remote key sequences |
 
 > **Note:** The `folder-gallery-card` Lovelace card is bundled with this integration and registered automatically. No manual installation or resource configuration required.
 
@@ -358,13 +372,47 @@ Each configured TV creates the following entities:
 
 In addition to standard media player attributes, the following are available:
 
-- `device_model`, `device_name`, `device_os`, `device_mac`
 - `picture_mode`, `picture_mode_list`
 - `sound_mode`, `sound_mode_list`
 - `channel`, `channel_name`, `channel_number`
-- `app_id`, `app_name`
-- `frame_art_mode` — whether Art Mode is active
-- `frame_art_current` — content ID of the current artwork
+- `app_id`, `source`, `source_list`
+- `ip_address`, `config_entry_id`
+- `screen_resolution` — the panel's native resolution (e.g. `3840x2160`), used
+  to fit uploaded images to the screen
+- `art_mode_status` — `on` or `off` on Frame TVs; **absent** when the TV is in
+  standby. See [Detecting Art Mode vs. watching TV](#detecting-art-mode-vs-watching-tv)
+- `frame_art_last_result` — outcome of the last Frame Art service call
+
+### Detecting Art Mode vs. watching TV
+
+A Frame is a **tri-state** device — standby, Art Mode, or actually being
+watched — while a `media_player` only has `on` and `off`:
+
+| the panel is | `media_player` state | `art_mode_status` |
+|---|---|---|
+| in standby | `off` | *(absent)* |
+| showing artwork | `on` | `on` |
+| being watched | `on` | `off` |
+
+Art Mode reports `on` because the panel *is* powered: it answers commands,
+accepts uploads, and `turn_on` would do nothing. The third state lives in the
+attribute. To automate on "someone is actually watching":
+
+```yaml
+template:
+  - binary_sensor:
+      - name: TV actually being watched
+        state: >
+          {{ is_state('media_player.YOUR_TV', 'on')
+             and state_attr('media_player.YOUR_TV', 'art_mode_status') != 'on' }}
+        delay_on: "00:00:05"
+```
+
+The `delay_on` matters: waking from standby powers the panel *before*
+`art_mode_status` settles (up to ~30–45 s when the value comes from the
+SmartThings cloud rather than local IP Control), so without it a TV waking
+straight into Art Mode briefly looks like someone switched it on. Debouncing
+the rise only keeps "turned off" instantaneous.
 
 ### Frame Art Sensor Attributes
 
@@ -448,7 +496,7 @@ These services require a Samsung **Frame TV** with Art Mode. They are called on 
 | `samsungtv_smart.art_available` | List all available artworks (optionally filtered by category) |
 | `samsungtv_smart.art_get_current` | Get info about the currently displayed artwork |
 | `samsungtv_smart.art_select_image` | Display a specific artwork by content ID |
-| `samsungtv_smart.art_upload` | Upload a local image to the TV |
+| `samsungtv_smart.art_upload` | Upload a local image to the TV — see [What happens to your image](#what-happens-to-your-image) |
 | `samsungtv_smart.art_upload_batch` | Upload every image in a folder — idempotent re-runs (skips unchanged files) + throttle for large batches + optional perceptual duplicate check |
 | `samsungtv_smart.art_identify` | Identify the current artwork (reverse image search + LLM) and return its metadata. Requires the Art Identification option to be configured |
 | `samsungtv_smart.art_delete` | Delete a user-uploaded artwork (MY-* IDs only) |
@@ -565,6 +613,27 @@ Format: `type_color`
 
 Available filters: `none`, `mono`, `original`, `ink`, `watercolor`, `oil`, `pastel`, `posterize`, `noir`, `quartertone`
 
+### What happens to your image
+
+Frame TVs are strict about what they accept, and a rejected upload usually
+fails as a grey rectangle rather than an error. Every upload — from the
+`art_upload` and `art_upload_batch` services, the upload card and the gallery
+card alike — is therefore normalised first:
+
+- **Converted to baseline JPEG** (never progressive), 4:2:0 chroma, quality 92.
+  Maximum quality was tried and the TVs refuse it.
+- **Fitted to your panel's resolution**, read from the `screen_resolution`
+  attribute — so 8K panels are not downscaled to 4K, and **portrait images keep
+  their orientation** instead of being fitted to a landscape box.
+- **EXIF orientation applied, then all metadata stripped.** Photos that
+  appeared rotated on the TV no longer do.
+- **HEIC/HEIF accepted.** Photos straight from an iPhone work without
+  converting them first.
+
+Uploading does **not** change what is on screen: it never switches the TV into
+Art Mode, and never pulls it away from the input you are watching. The artwork
+is added to the Frame's library, exactly as the SmartThings app does it.
+
 ### Thumbnail Downloads
 
 Thumbnails are automatically organized and saved to a **per-TV** directory keyed
@@ -606,8 +675,19 @@ obscure works, and identifies photographs too).
 
 **Enable it** under **Settings → Devices & Services → your TV → Configure →
 Art Identification**: turn it on, paste a Google Vision API key, pick the LLM
-provider and paste its key (an optional model field defaults sensibly). Keys are
-stored in the config entry, never in YAML.
+provider and paste its key. Keys are stored in the config entry, never in YAML.
+
+Once a provider and key are saved, the **Model** field becomes a dropdown of
+the models your key can actually use, read live from the provider — so a model
+the provider retires no longer breaks identification silently. It stays
+free-text-capable for a brand-new model or a fine-tune, and **leaving it blank
+picks the best available model automatically**.
+
+Reverse image search fails more often than you would expect on artwork, so when
+it returns nothing usable the model may identify a piece it recognises on its
+own. Those answers are capped at **confidence 0.6**, so the attribute stays
+meaningful: above 0.6 means corroborated by the web, at or below means the
+model recognised it unaided.
 
 Once enabled, **`sensor.<tv>_art_metadata`** identifies each artwork
 automatically as it changes (debounced) and exposes the metadata as attributes,
@@ -824,6 +904,46 @@ The SmartThings `supportedInputSources` attribute returns empty on some 2024 Fra
 ### Picture mode not updating after change
 
 SmartThings caches the picture mode value. This fork automatically sends a `refresh` command after any `setPictureMode` call to force the TV to report the new value. If the `select` entity still shows a stale value, wait a few seconds for the next poll cycle.
+
+### Picture mode does not change the TV at all
+
+The error now names the response SmartThings gave for every attempt, and the
+code tells you where the problem is:
+
+| response | meaning | what to do |
+|---|---|---|
+| **422** Unprocessable Entity | that capability does not exist on your model | nothing — the other capability is tried automatically |
+| **429** Too Many Requests | rate limited | wait a minute; avoid changing mode repeatedly in quick succession |
+| **409** Conflict on *every* attempt | the cloud will not deliver commands to your TV | see below |
+
+Also look for this warning, which is the decisive one:
+
+```text
+SmartThings accepted refresh/refresh but the TV did not execute it (result: FAILED)
+— the TV is registered in the cloud but the cloud cannot reach it.
+```
+
+**A `FAILED` result, or a 409 on every attempt, is not an integration problem.**
+It means Samsung's cloud has your TV registered but cannot talk to it, so it
+serves the last state it knows while accepting and dropping every command. The
+tell-tale signs: nothing works from the **SmartThings mobile app** either, and
+changes made on the TV with its own remote never appear in Home Assistant.
+
+The usual cause is the TV's own internet access being filtered — Pi-hole,
+AdGuard Home or a router blocklist catching Samsung's cloud endpoints as
+"telemetry". To check:
+
+1. In your DNS filter's query log, filter by the TV's IP address and look for
+   **blocked** entries.
+2. Allow `*.samsungcloudsolution.com`, `*.samsungcloudsolution.net`,
+   `*.samsungiotcloud.com`, `*.samsungosp.com` and `*.samsungqbe.com`.
+3. **Power-cycle the TV at the mains** — a standby toggle is not enough, the
+   cloud connection is only re-established on a cold boot.
+
+Picture mode also has a local fallback: a WebSocket remote key is sent straight
+to the TV alongside the cloud command, which works on TVs that honour those
+keys regardless of SmartThings. `FILMMAKER MODE` and `Natural` have no
+dedicated key and are cloud-only.
 
 ### Frame Art services not working
 

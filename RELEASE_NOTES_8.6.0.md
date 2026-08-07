@@ -4,10 +4,10 @@ If this project is useful to you, you can support its development:
 
 # <a href="https://buymeacoffee.com/thefab21" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-black.png" alt="Buy Me A Coffee" height="41" width="174"></a>
 
-> **Status: stable release.** Focused on Artwork Identification: it stops
-> breaking when a provider retires a model, and it works with the current
-> generation of reasoning models. No breaking changes; existing configurations
-> keep working.
+> **Status: stable release.** Two themes: Artwork Identification stops breaking
+> when a provider retires a model and now recognises works it used to refuse,
+> and picture mode failures finally say what is wrong instead of failing
+> silently. No breaking changes; existing configurations keep working.
 
 ## Highlights
 
@@ -15,8 +15,12 @@ If this project is useful to you, you can support its development:
   hardcoded — so a retired model no longer silently breaks identification.
 - **Gemini 3.x models work.** Identification failed with a cryptic JSON error
   on the newer models; the cause was the reply being cut off, not malformed.
-- **A model that becomes unavailable now tells you so**, and lists the models
-  your key can actually use.
+- **Famous artworks are identified again.** Well-known pieces came back
+  "not identified" because of how we phrased the question, not because the
+  model could not answer it.
+- **Picture mode failures are diagnosable.** They used to report *"failed via
+  any capability/form"* and nothing else; they now name the exact response from
+  SmartThings — including commands the cloud accepts but never delivers.
 
 ---
 
@@ -224,6 +228,64 @@ Two error paths that used to mislead:
 
 ---
 
+## Picture mode: saying what actually failed
+
+A report of picture mode simply not working ([#197](https://github.com/TheFab21/ha-samsungtv-smart/issues/197))
+turned into four separate defects, none of which changed the panel but all of
+which hid the real cause.
+
+**The error said nothing.** `Failed to set picture mode 'Movie' via any
+capability/form` means every attempt was rejected — but the HTTP errors behind
+those rejections were logged at debug level only, so a bug report contained
+nothing to act on. They are now named in the error itself:
+
+```text
+Failed to set picture mode 'Movie' — every attempt was rejected by SmartThings:
+custom.picturemode (name='Movie'): 409 Conflict;
+samsungvd.pictureMode (id='modeMovie'): 422 Unprocessable Entity
+```
+
+**We were causing our own rate limiting.** Each change fires up to four
+commands (two capabilities × two argument forms), plus a refresh and a
+read-back. A 422 is a verdict on the *capability*, so retrying it with the
+other argument form is a guaranteed-wasted request — and enough of those walk
+the device into SmartThings' rate limiter, after which everything fails
+regardless. A 422 now marks the capability unsupported, and a 429 abandons the
+remaining attempts instead of digging deeper.
+
+**Localized mode names arrived padded.** Samsung returns them with leading
+whitespace in some locales (` Prirodzený`, ` Dynamický`), which we passed
+straight into the dropdown and back out as the command argument. Now stripped.
+
+**The local fallback was locked to three languages.** When the cloud cannot
+apply a picture mode, the integration also sends a WebSocket remote key
+directly to the TV. That key was looked up by *display name*, and only English,
+French and German were listed — so on any other locale the fallback silently
+never fired. It is now looked up by the internal mode id (`modeStandard`,
+`modeDynamic`, …), which is the same in every language.
+
+> **Note:** `FILMMAKER MODE` and `Natural` still have no remote key. Rather
+> than send an approximation, they send nothing — the table maps "natural" to
+> the *Movie* key, and quietly setting the wrong mode is worse than setting
+> none.
+
+**And the most consequential one: a command can be accepted and never run.**
+`HTTP 200` from SmartThings only means the request was accepted; whether the TV
+executed it is in the body:
+
+```json
+{"results": [{"id": "…", "status": "FAILED"}]}
+```
+
+We logged that verbatim and never read it. In the report above, `refresh`
+returned `FAILED` on all twelve calls while the log read like a success — which
+is exactly what a TV looks like when it is registered in the SmartThings cloud
+but can no longer reach it (commonly: DNS or ad-blocking rules catching
+`samsung*` domains). That now raises an explicit warning naming the cause,
+rather than leaving a working-looking log and a TV that ignores everything.
+
+---
+
 ## Upgrade notes
 
 - No configuration changes. Update via HACS and restart Home Assistant.
@@ -231,8 +293,10 @@ Two error paths that used to mislead:
   Identification*, clear the **Model** field and save: the best available model
   for your key is selected automatically. Re-opening the page then shows the
   full dropdown.
-- Nothing else in the integration is affected — this release touches only the
-  identification pipeline and its configuration step.
+- **If picture mode has never worked on your TV**, the new error message now
+  says why. A `FAILED` result or a 409 on every attempt means the SmartThings
+  cloud cannot reach the TV itself — check the TV's own internet access before
+  suspecting the integration.
 
 ---
 
@@ -265,3 +329,17 @@ Two error paths that used to mislead:
   model may identify a work it recognises unaided (confidence capped at 0.6).
 - **Fix:** an upload to an unreachable TV fails immediately with a clear
   message instead of hanging on a power-on that cannot happen.
+- **Fix:** a failed picture mode change names the SmartThings response for
+  every attempt instead of reporting only "via any capability/form"
+  ([#197](https://github.com/TheFab21/ha-samsungtv-smart/issues/197)).
+- **Fix:** a 422 no longer triggers a second attempt on the same capability,
+  and a 429 stops the remaining attempts — the retry matrix was walking devices
+  into SmartThings' rate limiter.
+- **Fix:** localized picture mode names are stripped of the leading whitespace
+  Samsung returns in some locales.
+- **Fix:** the local WebSocket key fallback for picture mode is resolved by
+  mode id instead of display name, so it works outside English, French and
+  German.
+- **New:** a command the cloud accepts but the TV never executes
+  (`{"status": "FAILED"}`) raises a warning naming the likely cause, instead of
+  appearing in the log as a success.

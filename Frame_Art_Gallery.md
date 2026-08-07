@@ -411,6 +411,19 @@ action:
 
 This feature lets you browse images stored on your Home Assistant server and upload them directly to the Frame TV from the Lovelace UI — no Samsung app needed.
 
+> **Want to upload a photo straight from your phone instead?** The gallery card
+> shows images that are *already on the HA server*. For picking an image on
+> whatever device you are holding and pushing it to the Frame in one step, use
+> the bundled **`samsung-art-upload-card`** — no folder sensor, no pre-placed
+> file. It is documented in the [main README](README.md#entities). The two cards
+> complement each other: this one for a curated library, that one for a
+> spur-of-the-moment photo.
+>
+> Both go through the same upload path, so images are normalised for the panel
+> the same way (baseline JPEG, fitted to your screen resolution, EXIF rotation
+> applied, HEIC accepted) — see
+> [What happens to your image](README.md#what-happens-to-your-image).
+
 ### How It Works
 
 1. You store your images in `/config/media/<folder>/` (exposed via HA's Media Source)
@@ -516,8 +529,17 @@ A few details worth knowing:
   path does not end in `store`/`personal` and the image isn't already a
   `SAM-`/`MY_` artwork. Select/favourite/delete actions on TV-resident artwork are
   unaffected and keep using the configured `entity_id`.
-- **Single-Frame setups are unchanged.** With exactly one Frame TV detected, the
-  upload goes straight through to the configured entity with no extra prompt.
+- **With exactly one Frame detected, that Frame is used** — no prompt. Note it
+  is the *discovered* Frame, not the one named in your card config. Those are
+  normally the same TV, but they diverge when a second Frame is switched off at
+  the mains or has been removed: discovery only lists TVs currently exposing
+  `art_mode_status`, so an unreachable one drops out. Falling back to the
+  configured entity in that situation used to send uploads to the very TV
+  discovery had just excluded, silently and with no chooser to reveal it.
+- **An upload to an unreachable TV fails immediately**, with
+  *"&lt;host&gt; is unreachable — cannot upload"*, instead of waiting on a
+  power-on that can never complete. A Frame in standby still answers its REST
+  endpoint and is woken normally; one that is unplugged or faulty does not.
 - **No configuration needed.** Frames are discovered automatically from the
   `art_mode_status` attribute that the integration adds to each Frame's
   `media_player`. Any Frame the integration manages shows up in the chooser.
