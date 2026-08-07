@@ -36,6 +36,7 @@ This fork brings improved WebSocket stability, full Samsung Frame TV Art Mode su
 - [Automations & Tips](#automations--tips)
 - [Troubleshooting](#troubleshooting)
   - [Integration not appearing in Add Integration](#integration-not-appearing-in-add-integration)
+  - [Picture mode does not change the TV at all](#picture-mode-does-not-change-the-tv-at-all)
   - [IP Control reports Art Mode "on" when it isn't](#ip-control-reports-art-mode-on-when-it-isnt)
 - [Credits](#credits)
 
@@ -606,8 +607,19 @@ obscure works, and identifies photographs too).
 
 **Enable it** under **Settings → Devices & Services → your TV → Configure →
 Art Identification**: turn it on, paste a Google Vision API key, pick the LLM
-provider and paste its key (an optional model field defaults sensibly). Keys are
-stored in the config entry, never in YAML.
+provider and paste its key. Keys are stored in the config entry, never in YAML.
+
+Once a provider and key are saved, the **Model** field becomes a dropdown of
+the models your key can actually use, read live from the provider — so a model
+the provider retires no longer breaks identification silently. It stays
+free-text-capable for a brand-new model or a fine-tune, and **leaving it blank
+picks the best available model automatically**.
+
+Reverse image search fails more often than you would expect on artwork, so when
+it returns nothing usable the model may identify a piece it recognises on its
+own. Those answers are capped at **confidence 0.6**, so the attribute stays
+meaningful: above 0.6 means corroborated by the web, at or below means the
+model recognised it unaided.
 
 Once enabled, **`sensor.<tv>_art_metadata`** identifies each artwork
 automatically as it changes (debounced) and exposes the metadata as attributes,
@@ -824,6 +836,46 @@ The SmartThings `supportedInputSources` attribute returns empty on some 2024 Fra
 ### Picture mode not updating after change
 
 SmartThings caches the picture mode value. This fork automatically sends a `refresh` command after any `setPictureMode` call to force the TV to report the new value. If the `select` entity still shows a stale value, wait a few seconds for the next poll cycle.
+
+### Picture mode does not change the TV at all
+
+The error now names the response SmartThings gave for every attempt, and the
+code tells you where the problem is:
+
+| response | meaning | what to do |
+|---|---|---|
+| **422** Unprocessable Entity | that capability does not exist on your model | nothing — the other capability is tried automatically |
+| **429** Too Many Requests | rate limited | wait a minute; avoid changing mode repeatedly in quick succession |
+| **409** Conflict on *every* attempt | the cloud will not deliver commands to your TV | see below |
+
+Also look for this warning, which is the decisive one:
+
+```text
+SmartThings accepted refresh/refresh but the TV did not execute it (result: FAILED)
+— the TV is registered in the cloud but the cloud cannot reach it.
+```
+
+**A `FAILED` result, or a 409 on every attempt, is not an integration problem.**
+It means Samsung's cloud has your TV registered but cannot talk to it, so it
+serves the last state it knows while accepting and dropping every command. The
+tell-tale signs: nothing works from the **SmartThings mobile app** either, and
+changes made on the TV with its own remote never appear in Home Assistant.
+
+The usual cause is the TV's own internet access being filtered — Pi-hole,
+AdGuard Home or a router blocklist catching Samsung's cloud endpoints as
+"telemetry". To check:
+
+1. In your DNS filter's query log, filter by the TV's IP address and look for
+   **blocked** entries.
+2. Allow `*.samsungcloudsolution.com`, `*.samsungcloudsolution.net`,
+   `*.samsungiotcloud.com`, `*.samsungosp.com` and `*.samsungqbe.com`.
+3. **Power-cycle the TV at the mains** — a standby toggle is not enough, the
+   cloud connection is only re-established on a cold boot.
+
+Picture mode also has a local fallback: a WebSocket remote key is sent straight
+to the TV alongside the cloud command, which works on TVs that honour those
+keys regardless of SmartThings. `FILMMAKER MODE` and `Natural` have no
+dedicated key and are cloud-only.
 
 ### Frame Art services not working
 
