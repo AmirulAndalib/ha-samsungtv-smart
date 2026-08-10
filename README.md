@@ -202,10 +202,26 @@ This method authenticates via your Samsung account. Tokens are refreshed automat
 > If any of these is missing, clicking **Authorize** ends on a **404: Not
 > found** ([#204](https://github.com/TheFab21/ha-samsungtv-smart/issues/204)) —
 > the authorisation itself succeeded, the way back did not. This bites Docker
-> installs in particular, where no external URL is configured by default. If
-> you would rather not use My Home Assistant at all, use the
-> [Personal Access Token](#option-2--personal-access-token-pat) method, which
-> involves no redirect.
+> installs in particular, where no external URL is configured by default.
+>
+> ⚠️ **Do not replace the hostname with your own.** `https://my.home-assistant.io/redirect/oauth`
+> works as a whole; `https://your-ha.example.com/redirect/oauth` gives a 404,
+> because `/redirect/oauth` is a route on the relay, not on your server.
+
+**Prefer not to use My Home Assistant?** You can point SmartThings at your own
+instance instead — Home Assistant uses this form automatically when My Home
+Assistant is not in use. Register this redirect URI instead of the one above:
+
+```text
+https://your-ha.example.com/auth/external/callback
+```
+
+`/auth/external/callback` is the route Home Assistant genuinely serves. Set the
+same URL as your external URL under **Settings → System → Network**. This keeps
+the callback on your own domain, with no third-party hop — it does require your
+instance to be reachable over HTTPS at that address. Failing that, the
+[Personal Access Token](#option-2--personal-access-token-pat) method involves no
+redirect at all.
 
 **Step 1 — Create a SmartThings OAuth App (one time)**
 
