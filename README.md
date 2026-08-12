@@ -373,24 +373,37 @@ To change connection or credentials after setup, open **Settings → Devices & S
 
 ## Entities
 
-Each configured TV creates the following entities:
+**Not every TV gets every entity** — most are created only when the channel
+they depend on is available. A plain (non-Frame) TV without SmartThings or IP
+Control gets just the media player and remote; that is expected, not a fault.
+The **Requires** column below says what each one needs.
 
-| Entity | Type | Description |
-|---|---|---|
-| `media_player.<tv_name>` | Media Player | Main TV control entity |
-| `switch.<tv_name>_art_mode` | Switch | Toggle Art Mode on/off (Frame TVs only) |
-| `sensor.<tv_name>_frame_art` | Sensor | Currently displayed artwork info (Frame TVs only) |
-| `sensor.<tv_name>_personal` / `_store` / `_other` | Sensor | Thumbnail folder size (MB) per subdirectory, with a `file_list` attribute for gallery cards (Frame TVs only, auto-created in v7) |
-| `sensor.<tv_name>_art_metadata` | Sensor | Title, artist and description of the current artwork (Frame TVs, requires [Artwork Identification](#artwork-identification)) |
-| `select.<tv_name>_picture_mode` | Select | Change picture mode (Standard, Movie, etc.) |
-| `select.<tv_name>_color_tone` | Select | Colour tone / white balance preset |
-| `select.<tv_name>_speaker_select` | Select | Audio output — TV speaker, external, or Q-Symphony when a compatible soundbar is paired |
-| `select.<tv_name>_matte_type` / `_matte_color` | Select | Art Mode matte style and colour (Frame TVs only) |
-| `select.<tv_name>_motion_sensitivity` / `_motion_timer` / `_brightness_sensor` | Select | Frame motion detector and ambient light sensor settings |
-| `number.<tv_name>_art_mode_brightness` / `_art_mode_color_temperature` | Number | Art Mode panel brightness and colour temperature (Frame TVs only) |
-| `number.<tv_name>_backlight` | Number | Panel backlight level |
-| `button.<tv_name>_reboot` | Button | Reboot the TV |
-| `remote.<tv_name>` | Remote | Send remote key sequences |
+| Entity | Type | Requires | Description |
+|---|---|---|---|
+| `media_player.<tv_name>` | Media Player | — | Main TV control entity |
+| `remote.<tv_name>` | Remote | — | Send remote key sequences |
+| `select.<tv_name>_picture_mode` | Select | SmartThings | Change picture mode (Standard, Movie, etc.) |
+| `select.<tv_name>_speaker_select` | Select | SmartThings **or** IP Control | Audio output — TV speaker, external, or Q-Symphony when a compatible soundbar is paired |
+| `select.<tv_name>_color_tone` | Select | **IP Control** | Colour tone / white balance preset |
+| `number.<tv_name>_backlight` | Number | **IP Control** | Panel backlight level |
+| `number.<tv_name>_contrast` / `_brightness` / `_sharpness` / … | Number | **IP Control** | Expert picture calibration sliders (normal viewing only) |
+| `button.<tv_name>_reboot` | Button | **IP Control** | Reboot the TV |
+| `switch.<tv_name>_art_mode` | Switch | Frame TV | Toggle Art Mode on/off |
+| `sensor.<tv_name>_frame_art` | Sensor | Frame TV | Currently displayed artwork info |
+| `sensor.<tv_name>_personal` / `_store` / `_other` | Sensor | Frame TV | Thumbnail folder size (MB) per subdirectory, with a `file_list` attribute for gallery cards (auto-created in v7) |
+| `select.<tv_name>_matte_type` / `_matte_color` | Select | Frame TV | Art Mode matte style and colour |
+| `select.<tv_name>_motion_sensitivity` / `_motion_timer` / `_brightness_sensor` | Select | Frame TV | Frame motion detector and ambient light sensor settings |
+| `number.<tv_name>_art_mode_brightness` / `_art_mode_color_temperature` | Number | Frame TV | Art Mode panel brightness and colour temperature |
+| `sensor.<tv_name>_art_metadata` | Sensor | Frame TV + [Artwork Identification](#artwork-identification) | Title, artist and description of the current artwork |
+
+Where:
+
+- **SmartThings** — an API key and device ID are configured (see [SmartThings Authentication](#smartthings-authentication)).
+- **IP Control** — the local JSON-RPC channel (port 1516) is **paired** *and*
+  *Enable IP Control* is on, under **Reconfigure → IP Control**. Pairing is
+  optional and is **not** done automatically: if you have never paired it, none
+  of the entities marked *IP Control* exist. See [Reconfigure](#reconfigure).
+- **Frame TV** — the TV reports Art Mode support. Detected automatically.
 
 > **Note:** The `folder-gallery-card` Lovelace card is bundled with this integration and registered automatically. No manual installation or resource configuration required.
 
