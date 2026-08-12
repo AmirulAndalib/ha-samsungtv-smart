@@ -161,7 +161,8 @@
     "error": {
       "invalid_tv_list": "Formato not valido. Controlla la documentazione",
       "ip_control_no_host": "Nessun indirizzo host è configurato per questo televisore.",
-      "ip_control_pair_failed": "Associazione non riuscita. Assicurati che il televisore sia acceso e in visualizzazione normale (non in modalità Arte) e che IP Remote sia abilitato, quindi riprova."
+      "ip_control_pair_failed": "Associazione non riuscita. Assicurati che il televisore sia acceso e in visualizzazione normale (non in modalità Arte) e che IP Remote sia abilitato, quindi riprova.",
+      "ip_control_unreachable": "Impossibile raggiungere il TV sulla porta 1516: nessun servizio è in ascolto. Lo stato del TV e l'impostazione IP Remote non sono quindi la causa. Con ogni probabilità questo modello non supporta IP Control. Solo le entità retroilluminazione, tonalità colore, calibrazione immagine e riavvio dipendono da esso."
     }
   },
   "application_credentials": {

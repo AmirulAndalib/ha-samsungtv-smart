@@ -161,7 +161,8 @@
     "error": {
       "invalid_tv_list": "Formato no válido. Por favor, usa el formato JSON correcto.",
       "ip_control_no_host": "No hay ninguna dirección de host configurada para este televisor.",
-      "ip_control_pair_failed": "Error de emparejamiento. Asegúrate de que el televisor esté encendido y en visualización normal (no en modo Arte), y de que IP Remote esté activado, luego inténtalo de nuevo."
+      "ip_control_pair_failed": "Error de emparejamiento. Asegúrate de que el televisor esté encendido y en visualización normal (no en modo Arte), y de que IP Remote esté activado, luego inténtalo de nuevo.",
+      "ip_control_unreachable": "No se puede conectar con el televisor en el puerto 1516: no hay nada escuchando ahí. Por tanto, ni el estado del televisor ni el ajuste IP Remote son la causa. Es probable que este modelo no admita IP Control. Solo dependen de él las entidades de retroiluminación, tono de color, calibración de imagen y reinicio."
     }
   },
   "application_credentials": {

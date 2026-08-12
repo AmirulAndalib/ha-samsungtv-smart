@@ -161,7 +161,8 @@
     "error": {
       "invalid_tv_list": "Érvénytelen formátum. Kérjük, ellenőrizze a dokumentációt.",
       "ip_control_no_host": "Nincs gazdacím beállítva ehhez a TV-hez.",
-      "ip_control_pair_failed": "A párosítás sikertelen. Győződjön meg róla, hogy a TV be van kapcsolva és normál nézetben van (nem Art módban), és hogy az IP Remote engedélyezve van, majd próbálja újra."
+      "ip_control_pair_failed": "A párosítás sikertelen. Győződjön meg róla, hogy a TV be van kapcsolva és normál nézetben van (nem Art módban), és hogy az IP Remote engedélyezve van, majd próbálja újra.",
+      "ip_control_unreachable": "A tévé nem érhető el az 1516-os porton: semmi nem figyel rajta. Így sem a tévé állapota, sem az IP Remote beállítás nem az ok. Ez a modell nagy valószínűséggel nem támogatja az IP Controlt. Csak a háttérvilágítás, színtónus, képkalibráció és újraindítás entitások függenek tőle."
     }
   },
   "application_credentials": {

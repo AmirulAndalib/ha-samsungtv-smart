@@ -108,6 +108,7 @@
       "st_device_used": "This SmartThings device is already configured.",
       "not_successful": "Could not connect to the TV. Ensure it's on and allow the connection when prompted.",
       "ip_control_pair_failed": "IP Control pairing failed. Make sure the TV is ON in normal viewing (not Art Mode) and IP Remote is enabled in Settings, then try again.",
+      "ip_control_unreachable": "Could not reach the TV on port 1516. Nothing is listening there: the TV's power state and the IP Remote setting are not the cause. Most likely this model has no IP Control server -- it is a Samsung feature absent from many TVs, and older ones in particular. Everything else in the integration works without it; only the backlight, colour tone, picture calibration and reboot entities need it.",
       "ip_control_no_host": "No TV host is configured for this entry."
     },
     "abort": {
@@ -217,6 +218,7 @@
     "error": {
       "invalid_tv_list": "Invalid list format. Please use valid JSON format.",
       "ip_control_pair_failed": "Pairing failed. Make sure the TV is on and in normal viewing (not Art Mode), and that IP Remote is enabled, then try again.",
+      "ip_control_unreachable": "Could not reach the TV on port 1516 -- nothing is listening there. This model most likely does not support IP Control; the TV's state and the IP Remote setting are not the cause. Only the backlight, colour tone, picture calibration and reboot entities depend on it.",
       "ip_control_no_host": "No host address is configured for this TV."
     }
   },

@@ -816,7 +816,11 @@ class SamsungTVSmartOAuth2FlowHandler(
         Requires the TV ON in NORMAL viewing (not Art Mode) with "IP Remote"
         enabled (Settings -> Connections -> Network -> Expert Settings).
         """
-        from .api.ipcontrol import SamsungIPControl, SamsungIPControlError
+        from .api.ipcontrol import (
+            SamsungIPControl,
+            SamsungIPControlError,
+            SamsungIPControlTransportError,
+        )
 
         entry = self._get_reconfigure_entry()
         errors: dict[str, str] = {}
@@ -830,6 +834,20 @@ class SamsungTVSmartOAuth2FlowHandler(
                 client = SamsungIPControl(self.hass, host)
                 try:
                     token = await client.async_pair()
+                except SamsungIPControlTransportError as ex:
+                    # Nothing answered on port 1516 at all -- so the TV state
+                    # and the IP Remote setting are irrelevant, and telling the
+                    # user to check them sends them chasing the wrong thing
+                    # (#206). A refusal here almost always means the model has
+                    # no IP Control server; pairing waits 30s for the on-screen
+                    # prompt, so a failure that is instant never reached it.
+                    _LOGGER.warning(
+                        "IP Control pairing could not reach %s on port 1516: %s "
+                        "(the TV may not support IP Control at all)",
+                        host,
+                        ex,
+                    )
+                    errors[CONF_BASE] = "ip_control_unreachable"
                 except SamsungIPControlError as ex:
                     _LOGGER.warning(
                         "IP Control pairing failed for %s: %s (TV must be ON in "

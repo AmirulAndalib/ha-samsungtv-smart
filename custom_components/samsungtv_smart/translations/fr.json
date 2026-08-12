@@ -108,6 +108,7 @@
       "st_device_used": "Cet appareil SmartThings est déjà configuré.",
       "not_successful": "Impossible de créer une connexion WebSocket avec cette télévision Samsung.",
       "ip_control_pair_failed": "Échec de l'appairage IP Control. Assurez-vous que la TV est allumée en mode normal (pas en mode Art) et que IP Remote est activé dans les Paramètres, puis réessayez.",
+      "ip_control_unreachable": "Impossible de joindre le téléviseur sur le port 1516 : rien n'écoute à cette adresse. L'état du téléviseur et le réglage IP Remote ne sont donc pas en cause. Ce modèle ne prend probablement pas en charge IP Control. Seules les entités rétroéclairage, tonalité des couleurs, calibration de l'image et redémarrage en dépendent.",
       "ip_control_no_host": "Aucun hôte TV n'est configuré pour cette entrée."
     },
     "abort": {
@@ -204,6 +205,7 @@
     "error": {
       "invalid_tv_list": "Format invalide. Veuillez utiliser le format JSON valide.",
       "ip_control_pair_failed": "Échec de l'appairage. Vérifiez que le téléviseur est allumé en visionnage normal (pas en mode Art) et que IP Remote est activé, puis réessayez.",
+      "ip_control_unreachable": "Impossible de joindre le téléviseur sur le port 1516 : rien n'écoute à cette adresse. L'état du téléviseur et le réglage IP Remote ne sont donc pas en cause. Ce modèle ne prend probablement pas en charge IP Control. Seules les entités rétroéclairage, tonalité des couleurs, calibration de l'image et redémarrage en dépendent.",
       "ip_control_no_host": "Aucune adresse hôte n'est configurée pour ce téléviseur."
     }
   },
