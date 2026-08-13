@@ -186,6 +186,11 @@ class SamsungIPControl:
         self._art_desync_count = 0
 
     @property
+    def port(self) -> int:
+        """Return the port this client talks to (1516, or 1515 on pre-2020 TVs)."""
+        return self._port
+
+    @property
     def token(self) -> str | None:
         """Return the current access token, if any."""
         return self._token

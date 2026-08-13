@@ -382,6 +382,7 @@ The **Requires** column below says what each one needs.
 |---|---|---|---|
 | `media_player.<tv_name>` | Media Player | — | Main TV control entity |
 | `remote.<tv_name>` | Remote | — | Send remote key sequences |
+| `switch.<tv_name>_power` | Switch | — | Power the TV on/off (uses SmartThings when configured, WebSocket/WOL otherwise) |
 | `select.<tv_name>_picture_mode` | Select | SmartThings | Change picture mode (Standard, Movie, etc.) |
 | `select.<tv_name>_speaker_select` | Select | SmartThings **or** IP Control | Audio output — TV speaker, external, or Q-Symphony when a compatible soundbar is paired |
 | `select.<tv_name>_color_tone` | Select | **IP Control** | Colour tone / white balance preset |
@@ -403,6 +404,20 @@ Where:
   *Enable IP Control* is on, under **Reconfigure → IP Control**. Pairing is
   optional and is **not** done automatically: if you have never paired it, none
   of the entities marked *IP Control* exist. See [Reconfigure](#reconfigure).
+
+  > **Not every Samsung TV has it.** IP Control is a server the TV runs, opened
+  > by the *IP Remote* setting in its menus — but many models, older ones
+  > especially, do not run it at all, so having *IP Remote* on proves nothing.
+  > Pairing tries both known ports: **1516** (2020 and later) and **1515**
+  > (2019 and earlier — Samsung moved the port once). If it fails **instantly**
+  > with "could not reach the TV", nothing is listening on either and no change
+  > of TV settings will help. To confirm from a shell:
+  >
+  > ```bash
+  > nc -vz <tv-ip> 1516 ; nc -vz <tv-ip> 1515
+  > ```
+  >
+  > Everything else in the integration works without it.
 - **Frame TV** — the TV reports Art Mode support. Detected automatically.
 
 > **Note:** The `folder-gallery-card` Lovelace card is bundled with this integration and registered automatically. No manual installation or resource configuration required.

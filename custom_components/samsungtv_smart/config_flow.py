@@ -77,6 +77,7 @@ from .const import (
     CONF_IP_CONTROL_ART_MODE,
     CONF_IP_CONTROL_FW_VERSION,
     CONF_IP_CONTROL_MODEL_ID,
+    CONF_IP_CONTROL_PORT,
     CONF_IP_CONTROL_TOKEN,
     CONF_LOGO_OPTION,
     CONF_OAUTH_TOKEN,
@@ -102,6 +103,7 @@ from .const import (
     DEFAULT_PORT,
     DEFAULT_ST_POLL_ON_INTERVAL,
     DOMAIN,
+    IP_CONTROL_PORTS,
     MAX_CONTENT_LIST_INTERVAL,
     MAX_ST_POLL_ON_INTERVAL,
     MAX_WOL_REPEAT,
@@ -816,7 +818,11 @@ class SamsungTVSmartOAuth2FlowHandler(
         Requires the TV ON in NORMAL viewing (not Art Mode) with "IP Remote"
         enabled (Settings -> Connections -> Network -> Expert Settings).
         """
-        from .api.ipcontrol import SamsungIPControl, SamsungIPControlError
+        from .api.ipcontrol import (
+            SamsungIPControl,
+            SamsungIPControlError,
+            SamsungIPControlTransportError,
+        )
 
         entry = self._get_reconfigure_entry()
         errors: dict[str, str] = {}
@@ -827,9 +833,47 @@ class SamsungTVSmartOAuth2FlowHandler(
             if not host:
                 errors[CONF_BASE] = "ip_control_no_host"
             else:
-                client = SamsungIPControl(self.hass, host)
+                # Samsung moved the IP Control port once -- 1515 up to the
+                # 2019 models, 1516 from 2020 -- and we only ever knocked on
+                # 1516, so pre-2020 sets looked unsupported when they were
+                # merely listening elsewhere (#206). Only a transport failure
+                # moves on to the next port: any answer at all means the server
+                # is there and the failure lies elsewhere, so we must not retry
+                # and make the user accept two on-screen prompts.
+                client: SamsungIPControl | None = None
+                token = None
+                port = IP_CONTROL_PORTS[0]
+                transport_error: Exception | None = None
                 try:
-                    token = await client.async_pair()
+                    for candidate_port in IP_CONTROL_PORTS:
+                        client = SamsungIPControl(self.hass, host, port=candidate_port)
+                        try:
+                            token = await client.async_pair()
+                        except SamsungIPControlTransportError as ex:
+                            transport_error = ex
+                            _LOGGER.debug(
+                                "IP Control: nothing answered on %s:%s (%s)",
+                                host,
+                                candidate_port,
+                                ex,
+                            )
+                            continue
+                        port = candidate_port
+                        break
+                    if token is None:
+                        # No port answered: the TV state and the IP Remote
+                        # setting are irrelevant, so telling the user to check
+                        # them sends them chasing the wrong thing. Pairing waits
+                        # 30s for the on-screen prompt, so an instant failure
+                        # never reached it -- the model has no IP Control server.
+                        _LOGGER.warning(
+                            "IP Control pairing could not reach %s on any known "
+                            "port (%s): %s (the TV may not support IP Control)",
+                            host,
+                            ", ".join(str(p) for p in IP_CONTROL_PORTS),
+                            transport_error,
+                        )
+                        errors[CONF_BASE] = "ip_control_unreachable"
                 except SamsungIPControlError as ex:
                     _LOGGER.warning(
                         "IP Control pairing failed for %s: %s (TV must be ON in "
@@ -840,7 +884,10 @@ class SamsungTVSmartOAuth2FlowHandler(
                     )
                     errors[CONF_BASE] = "ip_control_pair_failed"
                 else:
-                    data_updates: dict[str, Any] = {CONF_IP_CONTROL_TOKEN: token}
+                    data_updates: dict[str, Any] = {
+                        CONF_IP_CONTROL_TOKEN: token,
+                        CONF_IP_CONTROL_PORT: port,
+                    }
                     try:
                         device_info = await client.async_get_device_information()
                     except SamsungIPControlError as ex:

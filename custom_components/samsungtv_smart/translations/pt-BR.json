@@ -161,7 +161,8 @@
     "error": {
       "invalid_tv_list": "Invalid list format. Please use valid JSON format.",
       "ip_control_no_host": "Nenhum endereço de host está configurado para esta TV.",
-      "ip_control_pair_failed": "Falha no emparelhamento. Verifique se a TV está ligada e em visualização normal (não no modo Arte) e se o IP Remote está ativado, depois tente novamente."
+      "ip_control_pair_failed": "Falha no emparelhamento. Verifique se a TV está ligada e em visualização normal (não no modo Arte) e se o IP Remote está ativado, depois tente novamente.",
+      "ip_control_unreachable": "Não foi possível acessar a TV na porta 1516: nada está escutando nela. Portanto, nem o estado da TV nem a configuração IP Remote são a causa. É provável que este modelo não seja compatível com o IP Control. Apenas as entidades de luz de fundo, tom de cor, calibração de imagem e reinicialização dependem dele."
     }
   },
   "application_credentials": {

@@ -42,6 +42,7 @@ from .const import (
     CONF_DEVICE_ID,
     CONF_ENABLE_IP_CONTROL,
     CONF_IP_CONTROL_TOKEN,
+    ip_control_port,
     CONF_IS_FRAME_TV,
     CONF_OAUTH_TOKEN,
     CONF_WS_NAME,
@@ -526,7 +527,12 @@ class SamsungTVIPControlColorToneSelect(SelectEntity):
             return None
         token = entry.data.get(CONF_IP_CONTROL_TOKEN)
         if self._ip_control is None or self._ip_control_token != token:
-            self._ip_control = SamsungIPControl(self.hass, self._host, token=token)
+            self._ip_control = SamsungIPControl(
+                self.hass,
+                self._host,
+                port=ip_control_port(entry.data),
+                token=token,
+            )
             self._ip_control_token = token
         return self._ip_control
 
@@ -680,7 +686,12 @@ class SamsungTVIPControlSpeakerSelect(SelectEntity):
             return None
         token = entry.data.get(CONF_IP_CONTROL_TOKEN)
         if self._ip_control is None or self._ip_control_token != token:
-            self._ip_control = SamsungIPControl(self.hass, self._host, token=token)
+            self._ip_control = SamsungIPControl(
+                self.hass,
+                self._host,
+                port=ip_control_port(entry.data),
+                token=token,
+            )
             self._ip_control_token = token
         return self._ip_control
 

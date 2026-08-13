@@ -39,6 +39,7 @@ from .const import (
     CONF_AUTH_METHOD,
     CONF_ENABLE_IP_CONTROL,
     CONF_IP_CONTROL_TOKEN,
+    ip_control_port,
     CONF_IS_FRAME_TV,
     CONF_WS_NAME,
     DATA_ART_API,
@@ -239,7 +240,12 @@ class FrameArtModeSwitch(SwitchEntity):
         if not token or not self._entry.options.get(CONF_ENABLE_IP_CONTROL, True):
             return None
         if self._ip_control is None or self._ip_control_token != token:
-            self._ip_control = SamsungIPControl(self._hass, self._host, token=token)
+            self._ip_control = SamsungIPControl(
+                self._hass,
+                self._host,
+                port=ip_control_port(self._entry.data),
+                token=token,
+            )
             self._ip_control_token = token
         return self._ip_control
 
@@ -907,7 +913,12 @@ class SamsungTVPowerSwitch(SwitchEntity):
         if not token or not self._entry.options.get(CONF_ENABLE_IP_CONTROL, True):
             return None
         if self._ip_control is None or self._ip_control_token != token:
-            self._ip_control = SamsungIPControl(self.hass, self._host, token=token)
+            self._ip_control = SamsungIPControl(
+                self.hass,
+                self._host,
+                port=ip_control_port(self._entry.data),
+                token=token,
+            )
             self._ip_control_token = token
         return self._ip_control
 
