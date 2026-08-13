@@ -115,6 +115,7 @@ from .const import (
     CONF_IP_CONTROL_FW_VERSION,
     CONF_IP_CONTROL_MODEL_ID,
     CONF_IP_CONTROL_TOKEN,
+    ip_control_port,
     CONF_LOGO_OPTION,
     CONF_OAUTH_TOKEN,
     CONF_PING_PORT,
@@ -1119,9 +1120,14 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
                 self._ip_control_client = None
                 self._ip_control_token_cached = None
             return None
-        if self._ip_control_client is None or self._ip_control_token_cached != token:
+        port = ip_control_port(entry.data)
+        if (
+            self._ip_control_client is None
+            or self._ip_control_token_cached != token
+            or self._ip_control_client.port != port
+        ):
             self._ip_control_client = SamsungIPControl(
-                self.hass, self._host, token=token
+                self.hass, self._host, port=port, token=token
             )
             self._ip_control_token_cached = token
         return self._ip_control_client

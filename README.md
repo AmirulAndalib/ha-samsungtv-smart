@@ -405,14 +405,16 @@ Where:
   optional and is **not** done automatically: if you have never paired it, none
   of the entities marked *IP Control* exist. See [Reconfigure](#reconfigure).
 
-  > **Not every Samsung TV has it.** IP Control is a separate server on the TV,
-  > unrelated to the *IP Remote* setting in the TV's menus, and many models —
-  > older ones especially — simply do not run it. If pairing fails **instantly**
-  > with "could not reach the TV on port 1516", nothing is listening and no
-  > amount of changing TV settings will help. You can confirm from a shell:
+  > **Not every Samsung TV has it.** IP Control is a server the TV runs, opened
+  > by the *IP Remote* setting in its menus — but many models, older ones
+  > especially, do not run it at all, so having *IP Remote* on proves nothing.
+  > Pairing tries both known ports: **1516** (2020 and later) and **1515**
+  > (2019 and earlier — Samsung moved the port once). If it fails **instantly**
+  > with "could not reach the TV", nothing is listening on either and no change
+  > of TV settings will help. To confirm from a shell:
   >
   > ```bash
-  > nc -vz <tv-ip> 1516     # "succeeded" = supported, "refused"/timeout = not
+  > nc -vz <tv-ip> 1516 ; nc -vz <tv-ip> 1515
   > ```
   >
   > Everything else in the integration works without it.

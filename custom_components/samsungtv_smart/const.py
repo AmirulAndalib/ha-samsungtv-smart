@@ -1,6 +1,8 @@
 """Constants for the samsungtv_smart integration."""
 
+from collections.abc import Mapping
 from enum import Enum
+from typing import Any
 
 
 class AppLoadMethod(Enum):
@@ -188,6 +190,25 @@ CONF_IP_CONTROL_ART_MODE = "ip_control_art_mode"
 # modelID here is the raw internal code IP Control returns (e.g. "25_PTM_FTV").
 CONF_IP_CONTROL_MODEL_ID = "ip_control_model_id"
 CONF_IP_CONTROL_FW_VERSION = "ip_control_fw_version"
+
+# The port the TV answered on, learned at pairing time and reused afterwards.
+# Samsung moved this once: 1515 up to the 2019 models, 1516 from 2020 onwards
+# (documented by the RTI and Allonis control drivers). This integration was
+# built against 2024/2025 Frames, so it only ever tried 1516 — leaving older
+# sets looking unsupported when they simply listen elsewhere (#206).
+# Absent from entry.data on TVs paired before this was introduced, hence the
+# default: those all paired on 1516 by definition.
+CONF_IP_CONTROL_PORT = "ip_control_port"
+# Mirrors api.ipcontrol.DEFAULT_IP_CONTROL_PORT — kept here so the config layer
+# does not have to import the api layer. Ordered: the modern port is tried
+# first, since it covers every model this integration primarily targets.
+IP_CONTROL_PORTS = (1516, 1515)
+
+
+def ip_control_port(entry_data: Mapping[str, Any]) -> int:
+    """Return the IP Control port to use for a TV, from its entry data."""
+    return entry_data.get(CONF_IP_CONTROL_PORT) or IP_CONTROL_PORTS[0]
+
 
 # Authentication methods
 AUTH_METHOD_OAUTH = "oauth"
