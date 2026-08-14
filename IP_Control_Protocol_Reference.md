@@ -149,13 +149,39 @@ model generation:
 
 ## Pre-2020 models (2019 and earlier)
 
-**No public documentation exists for this generation's method set.** Samsung
-publishes IP command lists only for the commercial Wall PRO / Wall LUX panels;
-the consumer-side integrator drivers (RTI, Crestron, AMX, Allonis) document the
-port, the required TV settings and a variable list, but not the JSON-RPC
-methods. Everything below is therefore empirical, from the single 2018 TV in
-[#206](https://github.com/TheFab21/ha-samsungtv-smart/issues/206) — treat it as
-one data point, not a specification.
+Samsung publishes no method list for consumer TVs of any generation — its own
+IP command lists cover the commercial Wall PRO / Wall LUX panels only, and the
+integrator drivers (RTI, Crestron, AMX, Allonis) document the port, the TV
+settings and a variable list, but never the JSON-RPC methods.
+
+There is, however, **one method-level source for this generation**, and it is
+already in this repository: `Savant_MU6070_IP_Profile_Catalogue.md`, extracted
+from a shipping Savant driver for a **2017 MU6070**. Read it alongside this
+section — but note what it does *not* cover:
+
+| the 2017 profile documents | it says nothing about |
+|---|---|
+| `createAccessToken`, `powerControl`, `muteControl`, `directVolumeControl`, `volumeUpDnControl`, `channelUpDnControl`, `inputSourceControl`, `directAccessControl`, `remoteKeyControl` | every picture setting — no `contrastControl`, `colorControl`, `tintControl`, `backlightControl`, `colorToneControl`, and no `getVideoStates` at all |
+
+So it cannot settle whether Color and Tint are readable on a pre-2020 set: a
+control driver choosing not to expose picture calibration is not evidence that
+the TV lacks it.
+
+What it *does* establish is that **the method set diverges in both directions**.
+`directVolumeControl` (absolute volume, range 0–50) and `inputSourceControl`
+(`HDMI1`–`HDMI4`, `TV`, `AV1`, `AV2`, `COMPONENT1`, `USB`) both work on the 2017
+TV and are `-32601` on a Frame 2024. Absence on the Frame therefore says nothing
+about an older model — which is precisely the mistake that kept pre-2020 TVs
+unsupported here for so long.
+
+> **Unused opportunity:** this integration calls neither `directVolumeControl`
+> nor `inputSourceControl`, because both are dead on the Frames it was built
+> against. On a pre-2020 TV they would give absolute volume and input switching
+> over the local channel, with no SmartThings involved. Untested here.
+
+The measurements below come from the single 2018 TV in
+[#206](https://github.com/TheFab21/ha-samsungtv-smart/issues/206) — one data
+point, not a specification.
 
 **UE50NU8005 (2018, Tizen ~4.0)**
 
@@ -184,6 +210,14 @@ Instrumentation was added for exactly this: the coordinator now logs the
 of shape. The next debug log from a pre-2020 TV answers the question. Until
 then, assume nothing: `colorControl` and `tintControl` are documented and may
 well work on older sets.
+
+One complication to expect when they do work: the **scales differ by
+generation**. The RTI driver notes a pre-2024 "standard variable set" against a
+2024/2025 one where brightness is 0–50 and **tint is an `R15`–`G15` token
+rather than an integer**. The ranges hardcoded in `IP_CONTROL_PICTURE_SETTINGS`
+(contrast 0–50, brightness −5…5, sharpness 0–20, color 0–50, tint −15…15) were
+measured on a Frame 2024, so they may be wrong for an older panel even where
+the method works.
 
 What *is* measured is narrower: `backlightControl` and `colorToneControl` are
 separately-addressed methods that this TV rejects outright, so the Backlight and
