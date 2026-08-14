@@ -370,6 +370,10 @@ Control server.
 
 ### 8.6.3
 
+- **New:** the `getVideoStates` payload is logged when its shape changes, so a
+  picture slider sitting "unavailable" can be traced to the field the TV
+  actually omitted.
+
 - **Fix:** the local remote-key fallback for picture mode is resolved by mode
   id, and by a language-independent match on the display name when the TV
   exposes no id map — it previously worked in English, French and German only

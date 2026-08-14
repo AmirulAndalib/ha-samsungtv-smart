@@ -165,20 +165,32 @@ one data point, not a specification.
 | TLS | Negotiates a **weak DH group**; the handshake fails at OpenSSL's default security level and needs the `@SECLEVEL=0` retry. Both this and the port had to be right for pairing to succeed. |
 | `createAccessToken` | ✅ — same flow, same on-screen prompt |
 | `getTVStates` | ✅ |
-| `getVideoStates` | ✅ — but returns fewer fields: contrast, brightness and sharpness are present, **tint is not** |
+| `getVideoStates` | ✅ — the method answers. **Which fields it returns is unknown**, see below. |
 | `backlightControl` | ❌ `-32003` |
 | `colorToneControl` | ❌ `-32003` |
 | `getDeviceInformation` | ❌ `-32003` |
 
-The reporter noted that RTI's driver documentation describes **different
-variable sets by model year** ("pre-2024 TVs use the standard variables,
-post-2024 use the new ones"), which fits: the picture controls exposed through
-`getVideoStates` work, while the separately-addressed `backlightControl` and
-`colorToneControl` do not exist in a usable form on that generation.
+**Open question — do Color and Tint work on this generation?** On that TV the
+Contrast and Brightness sliders worked while Tint showed as unavailable. A
+slider goes unavailable when its field is missing from the `getVideoStates`
+reply, so the obvious reading is that the TV returns fewer than five fields —
+**but that is an inference, not a measurement.** The payload was not logged
+anywhere, so we could not tell an omitted field from an empty one, and the
+reporter's entity list did not mention Color or Sharpness at all, which may
+simply mean it was partial.
 
-Practical consequence: on a pre-2020 TV, expect the state reads and the
-`getVideoStates` sliders to work, and the backlight / colour-tone entities to
-stay permanently unavailable.
+Instrumentation was added for exactly this: the coordinator now logs the
+`getVideoStates` payload and the names of any missing fields, once per change
+of shape. The next debug log from a pre-2020 TV answers the question. Until
+then, assume nothing: `colorControl` and `tintControl` are documented and may
+well work on older sets.
+
+What *is* measured is narrower: `backlightControl` and `colorToneControl` are
+separately-addressed methods that this TV rejects outright, so the Backlight and
+Colour Tone entities stay permanently unavailable on it. The reporter noted that
+RTI's driver documentation describes **different variable sets by model year**
+("pre-2024 TVs use the standard variables, post-2024 use the new ones"), which
+is consistent with that.
 
 ### RemoteKey values (`remoteKeyControl`)
 

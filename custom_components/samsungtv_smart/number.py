@@ -404,6 +404,11 @@ class IPControlVideoCoordinator(DataUpdateCoordinator):
         self._host = host
         self._ip_control: SamsungIPControl | None = None
         self._ip_control_token: str | None = None
+        # Which fields the TV last reported, so a change is logged once instead
+        # of every poll. Without this the payload was never recorded anywhere,
+        # and a slider sitting "unavailable" gave no way to tell whether the TV
+        # omitted the field or returned it empty (#206).
+        self._logged_fields: tuple[str, ...] | None = None
 
     def _device_title(self) -> str:
         entry = self.hass.config_entries.async_get_entry(self._entry.entry_id)
@@ -455,6 +460,20 @@ class IPControlVideoCoordinator(DataUpdateCoordinator):
 
         # Full read succeeded → the token is good; clear any prior problem.
         clear_token_problem(self.hass, self._entry.entry_id, METHOD_IP_CONTROL)
+        fields = tuple(sorted(data))
+        if fields != self._logged_fields:
+            _LOGGER.debug(
+                "IP Control getVideoStates on %s returned %s (missing: %s)",
+                self._host,
+                data,
+                ", ".join(
+                    setting.field
+                    for setting in IP_CONTROL_PICTURE_SETTINGS
+                    if setting.field not in data
+                )
+                or "nothing",
+            )
+            self._logged_fields = fields
         return data
 
 
