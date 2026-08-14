@@ -42,7 +42,6 @@ from .api.ipcontrol import (
 from .const import (
     CONF_ENABLE_IP_CONTROL,
     CONF_IP_CONTROL_TOKEN,
-    ip_control_port,
     CONF_IS_FRAME_TV,
     CONF_WS_NAME,
     DATA_ART_API,
@@ -50,6 +49,7 @@ from .const import (
     DEFAULT_PORT,
     DOMAIN,
     WS_PREFIX,
+    ip_control_port,
 )
 from .token_notify import METHOD_IP_CONTROL, clear_token_problem, notify_token_problem
 
