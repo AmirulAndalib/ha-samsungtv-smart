@@ -1743,6 +1743,17 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         return None
 
     def _get_st_sources(self):
+        # A manually configured source list must always have priority
+        custom_source_list = self._get_option(CONF_SOURCE_LIST, {})
+        if custom_source_list:
+            self._log.debug(
+                "Samsung TV: using custom source list: %s",
+                custom_source_list,
+            )
+            self._source_list = custom_source_list
+            self._default_source_used = False
+            return
+
         if not self._st:
             self._log.debug("SmartThings not configured, _get_st_sources not executed")
             return
