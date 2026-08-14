@@ -23,9 +23,13 @@ below marks each method's status on the QE55LS03D.
 
 ## Transport
 
-- **URL:** `https://<tv_ip>:1516/` — HTTPS, POST, JSON-RPC 2.0 envelope.
-- **Port:** `1516` (the library also references `1515`; `1516` is what responds on
-  our test TVs). Port opens only when **IP Remote** is enabled on the TV.
+- **URL:** `https://<tv_ip>:<port>/` — HTTPS, POST, JSON-RPC 2.0 envelope.
+- **Port:** `1516` on **2020 and later** models, `1515` on **2019 and earlier**.
+  Samsung moved it once; the RTI and Allonis control drivers document the same
+  split, and it was confirmed empirically on a 2018 UE50NU8005 (#206), which
+  answers only on 1515. The port opens only when **IP Remote** is enabled on
+  the TV. The integration tries 1516 then 1515 at pairing time and stores
+  whichever answered.
 - **TLS:** self-signed panel certificate → verification disabled
   (`check_hostname = False`, `verify_mode = CERT_NONE`).
 - **Headers:** only `Accept: application/json` and `Content-Type: application/json`
@@ -78,8 +82,19 @@ Returned as `{"error": {"code": <int>, "message": "..."}}`:
 | `-32000` | Unknown error | log, surface generic failure |
 | `-32001` | Not supported | method/feature absent on this model → disable that capability |
 | `-32002` | Failed | transient failure → retry / fall back |
-| `-32003` | Invalid operation | bad state for this command |
+| `-32003` | Invalid operation | bad state for this command — **but see below** |
 | `-32010` | Unauthorized | token invalid/expired → trigger re-pairing |
+
+> **`-32003` is not only a state error.** On the 2018 UE50NU8005 of #206 it is
+> returned *permanently*, with the message text `"Server error"`, for
+> `backlightControl`, `colorToneControl` and `getDeviceInformation` — while
+> `getTVStates` and `getVideoStates` answer normally on the same TV, in the same
+> state. So on older models it also stands in for "this method is not usable
+> here", where a Frame 2024 would answer `-32601 Method not found`. Treat a
+> repeated `-32003` on one method as a capability signal, not a transient
+> failure. Note also that the code the TV sends and the message it attaches do
+> not line up with this table: `-32002` is our `ERROR_SERVER` constant, yet
+> `-32003` is the one whose message reads "Server error".
 
 ---
 
@@ -118,6 +133,110 @@ when calling each method with only the `AccessToken` (no extra params):
 | `contrastControl` / `brightnessControl` / `sharpnessControl` / `colorControl` / `tintControl` | ✅ | `<field>`: int | `<field>` | **Writable** (earlier "read-only" was wrong). Get with no params; set with `{"<field>": n}`. Ranges (Frame 2024/2025): contrast 0–50, color 0–50, sharpness 0–20, brightness −5…5, tint −15…15. Write is picture-mode gated → `-32002` in Dynamic/HDR-dynamic; Standard/Movie/Filmmaker accept it. |
 | `directChannelControl` | ❌ | `atvDtv` + `airCable` + `channelNum` | — | Not implemented on Frame 2024 (Frames have no tuner anyway). |
 | `USBSourceControl` / `RVUSourceControl` / `ambientModeControl` | ❌ | — | — | Not implemented on Frame 2024. May exist on other models. |
+
+### Methods used by this integration but absent from the enumeration above
+
+Added here because the integration calls them and their behaviour differs by
+model generation:
+
+| Method | Setter param | Read returns | Notes |
+|---|---|---|---|
+| `backlightControl` | `backlight`: int (0–50) | `backlight` | Panel backlight. `-32003` on the 2018 set of #206. |
+| `colorToneControl` | `colorTone` | `colorTone` | White balance preset. `-32003` on the same TV. |
+| `getDeviceInformation` | — | `modelID`, `FWVersion` | Read once after pairing to gate model-dependent features. `-32003` on the same TV, so those installs keep their last known model/firmware. |
+
+---
+
+## Pre-2020 models (2019 and earlier)
+
+Samsung publishes no method list for consumer TVs of any generation — its own
+IP command lists cover the commercial Wall PRO / Wall LUX panels only, and the
+integrator drivers (RTI, Crestron, AMX, Allonis) document the port, the TV
+settings and a variable list, but never the JSON-RPC methods.
+
+There is, however, **one method-level source for this generation**, and it is
+already in this repository: `Savant_MU6070_IP_Profile_Catalogue.md`, extracted
+from a shipping Savant driver for a **2017 MU6070**. Read it alongside this
+section — but note what it does *not* cover:
+
+| the 2017 profile documents | it says nothing about |
+|---|---|
+| `createAccessToken`, `powerControl`, `muteControl`, `directVolumeControl`, `volumeUpDnControl`, `channelUpDnControl`, `inputSourceControl`, `directAccessControl`, `remoteKeyControl` | every picture setting — no `contrastControl`, `colorControl`, `tintControl`, `backlightControl`, `colorToneControl`, and no `getVideoStates` at all |
+
+So it cannot settle whether Color and Tint are readable on a pre-2020 set: a
+control driver choosing not to expose picture calibration is not evidence that
+the TV lacks it.
+
+What it *does* establish is that **the method set diverges in both directions**.
+`directVolumeControl` (absolute volume, range 0–50) and `inputSourceControl`
+(`HDMI1`–`HDMI4`, `TV`, `AV1`, `AV2`, `COMPONENT1`, `USB`) both work on the 2017
+TV and are `-32601` on a Frame 2024. Absence on the Frame therefore says nothing
+about an older model — which is precisely the mistake that kept pre-2020 TVs
+unsupported here for so long.
+
+> **Unused opportunity:** this integration calls neither `directVolumeControl`
+> nor `inputSourceControl`, because both are dead on the Frames it was built
+> against. On a pre-2020 TV they would give absolute volume and input switching
+> over the local channel, with no SmartThings involved. Untested here.
+
+The measurements below come from the single 2018 TV in
+[#206](https://github.com/TheFab21/ha-samsungtv-smart/issues/206) — one data
+point, not a specification.
+
+**UE50NU8005 (2018, Tizen ~4.0)**
+
+| | |
+|---|---|
+| Port | **1515** — nothing answers on 1516 |
+| TLS | Negotiates a **weak DH group**; the handshake fails at OpenSSL's default security level and needs the `@SECLEVEL=0` retry. Both this and the port had to be right for pairing to succeed. |
+| `createAccessToken` | ✅ — same flow, same on-screen prompt |
+| `getTVStates` | ✅ |
+| `getVideoStates` | ✅ — the method answers. **Which fields it returns is unknown**, see below. |
+| `backlightControl` | ❌ `-32003` |
+| `colorToneControl` | ❌ `-32003` |
+| `getDeviceInformation` | ❌ `-32003` |
+
+**Open question — do Color and Tint work on this generation?** On that TV the
+Contrast and Brightness sliders worked while Tint showed as unavailable.
+
+The **leading hypothesis is no longer that the field is missing.** A slider also
+goes unavailable when the field *is* returned but cannot be parsed as an
+integer: `native_value` does `int(raw)` and yields `None` on failure, and
+`available` requires a value. Samsung documents **tint as an `R15`–`G15` token**
+— non-numeric, button-stepped, no slider — on at least one generation. A TV
+answering `{"tint": "G15"}` would therefore produce exactly what was observed:
+Contrast and Brightness (plain integers) working, Tint unavailable, and nothing
+in the log to say why.
+
+Samsung's own **Wall PRO / Wall LUX IP command lists** document these methods
+with ranges that do not match ours either — `colorControl` 0–100,
+`tintControl` −50…50, contrast/brightness/sharpness 0–100 — against the
+Frame-2024-measured 0–50 / −5…5 / 0–20 / 0–50 / −15…15 hardcoded in
+`IP_CONTROL_PICTURE_SETTINGS`. Those lists cover commercial LED panels, not old
+consumer TVs, so they are not proof for a 2018 set; they do show the value
+formats and scales are not universal.
+
+Instrumentation was added to separate the two cases: the coordinator now logs
+the `getVideoStates` payload once per change of shape, listing **absent** fields
+and **present-but-not-an-integer** fields separately. The next debug log from a
+pre-2020 TV says which it is. Until then, assume nothing: `colorControl` and
+`tintControl` are documented and may well work on older sets — and if the value
+is an `R`/`G` token, the read is fine and it is our entity type that is wrong.
+
+One complication to expect when they do work: the **scales differ by
+generation**. The RTI driver notes a pre-2024 "standard variable set" against a
+2024/2025 one where brightness is 0–50 and **tint is an `R15`–`G15` token
+rather than an integer**. The ranges hardcoded in `IP_CONTROL_PICTURE_SETTINGS`
+(contrast 0–50, brightness −5…5, sharpness 0–20, color 0–50, tint −15…15) were
+measured on a Frame 2024, so they may be wrong for an older panel even where
+the method works.
+
+What *is* measured is narrower: `backlightControl` and `colorToneControl` are
+separately-addressed methods that this TV rejects outright, so the Backlight and
+Colour Tone entities stay permanently unavailable on it. The reporter noted that
+RTI's driver documentation describes **different variable sets by model year**
+("pre-2024 TVs use the standard variables, post-2024 use the new ones"), which
+is consistent with that.
 
 ### RemoteKey values (`remoteKeyControl`)
 
