@@ -370,9 +370,10 @@ Control server.
 
 ### 8.6.3
 
-- **New:** the `getVideoStates` payload is logged when its shape changes, so a
-  picture slider sitting "unavailable" can be traced to the field the TV
-  actually omitted.
+- **New:** the `getVideoStates` payload is logged when its shape changes,
+  separating fields the TV omitted from fields it returned in a form the slider
+  cannot use — a picture slider sitting "unavailable" can now be traced to
+  which of the two it is.
 
 - **Fix:** the local remote-key fallback for picture mode is resolved by mode
   id, and by a language-independent match on the display name when the TV

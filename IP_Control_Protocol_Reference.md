@@ -197,19 +197,31 @@ point, not a specification.
 | `getDeviceInformation` | ❌ `-32003` |
 
 **Open question — do Color and Tint work on this generation?** On that TV the
-Contrast and Brightness sliders worked while Tint showed as unavailable. A
-slider goes unavailable when its field is missing from the `getVideoStates`
-reply, so the obvious reading is that the TV returns fewer than five fields —
-**but that is an inference, not a measurement.** The payload was not logged
-anywhere, so we could not tell an omitted field from an empty one, and the
-reporter's entity list did not mention Color or Sharpness at all, which may
-simply mean it was partial.
+Contrast and Brightness sliders worked while Tint showed as unavailable.
 
-Instrumentation was added for exactly this: the coordinator now logs the
-`getVideoStates` payload and the names of any missing fields, once per change
-of shape. The next debug log from a pre-2020 TV answers the question. Until
-then, assume nothing: `colorControl` and `tintControl` are documented and may
-well work on older sets.
+The **leading hypothesis is no longer that the field is missing.** A slider also
+goes unavailable when the field *is* returned but cannot be parsed as an
+integer: `native_value` does `int(raw)` and yields `None` on failure, and
+`available` requires a value. Samsung documents **tint as an `R15`–`G15` token**
+— non-numeric, button-stepped, no slider — on at least one generation. A TV
+answering `{"tint": "G15"}` would therefore produce exactly what was observed:
+Contrast and Brightness (plain integers) working, Tint unavailable, and nothing
+in the log to say why.
+
+Samsung's own **Wall PRO / Wall LUX IP command lists** document these methods
+with ranges that do not match ours either — `colorControl` 0–100,
+`tintControl` −50…50, contrast/brightness/sharpness 0–100 — against the
+Frame-2024-measured 0–50 / −5…5 / 0–20 / 0–50 / −15…15 hardcoded in
+`IP_CONTROL_PICTURE_SETTINGS`. Those lists cover commercial LED panels, not old
+consumer TVs, so they are not proof for a 2018 set; they do show the value
+formats and scales are not universal.
+
+Instrumentation was added to separate the two cases: the coordinator now logs
+the `getVideoStates` payload once per change of shape, listing **absent** fields
+and **present-but-not-an-integer** fields separately. The next debug log from a
+pre-2020 TV says which it is. Until then, assume nothing: `colorControl` and
+`tintControl` are documented and may well work on older sets — and if the value
+is an `R`/`G` token, the read is fine and it is our entity type that is wrong.
 
 One complication to expect when they do work: the **scales differ by
 generation**. The RTI driver notes a pre-2024 "standard variable set" against a
