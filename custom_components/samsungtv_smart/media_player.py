@@ -115,7 +115,6 @@ from .const import (
     CONF_IP_CONTROL_FW_VERSION,
     CONF_IP_CONTROL_MODEL_ID,
     CONF_IP_CONTROL_TOKEN,
-    ip_control_port,
     CONF_LOGO_OPTION,
     CONF_OAUTH_TOKEN,
     CONF_PING_PORT,
@@ -180,6 +179,7 @@ from .const import (
     AppLaunchMethod,
     AppLoadMethod,
     PowerOnMethod,
+    ip_control_port,
 )
 from .entity import SamsungTVEntity
 from .logo import LOGO_OPTION_DEFAULT, LocalImageUrl, Logo, LogoOption

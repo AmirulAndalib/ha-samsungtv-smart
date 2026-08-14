@@ -39,7 +39,6 @@ from .const import (
     CONF_AUTH_METHOD,
     CONF_ENABLE_IP_CONTROL,
     CONF_IP_CONTROL_TOKEN,
-    ip_control_port,
     CONF_IS_FRAME_TV,
     CONF_WS_NAME,
     DATA_ART_API,
@@ -47,6 +46,7 @@ from .const import (
     DEFAULT_PORT,
     DOMAIN,
     WS_PREFIX,
+    ip_control_port,
 )
 
 _LOGGER = logging.getLogger(__name__)
