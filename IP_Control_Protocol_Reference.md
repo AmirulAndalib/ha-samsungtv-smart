@@ -23,9 +23,13 @@ below marks each method's status on the QE55LS03D.
 
 ## Transport
 
-- **URL:** `https://<tv_ip>:1516/` — HTTPS, POST, JSON-RPC 2.0 envelope.
-- **Port:** `1516` (the library also references `1515`; `1516` is what responds on
-  our test TVs). Port opens only when **IP Remote** is enabled on the TV.
+- **URL:** `https://<tv_ip>:<port>/` — HTTPS, POST, JSON-RPC 2.0 envelope.
+- **Port:** `1516` on **2020 and later** models, `1515` on **2019 and earlier**.
+  Samsung moved it once; the RTI and Allonis control drivers document the same
+  split, and it was confirmed empirically on a 2018 UE50NU8005 (#206), which
+  answers only on 1515. The port opens only when **IP Remote** is enabled on
+  the TV. The integration tries 1516 then 1515 at pairing time and stores
+  whichever answered.
 - **TLS:** self-signed panel certificate → verification disabled
   (`check_hostname = False`, `verify_mode = CERT_NONE`).
 - **Headers:** only `Accept: application/json` and `Content-Type: application/json`
@@ -78,8 +82,19 @@ Returned as `{"error": {"code": <int>, "message": "..."}}`:
 | `-32000` | Unknown error | log, surface generic failure |
 | `-32001` | Not supported | method/feature absent on this model → disable that capability |
 | `-32002` | Failed | transient failure → retry / fall back |
-| `-32003` | Invalid operation | bad state for this command |
+| `-32003` | Invalid operation | bad state for this command — **but see below** |
 | `-32010` | Unauthorized | token invalid/expired → trigger re-pairing |
+
+> **`-32003` is not only a state error.** On the 2018 UE50NU8005 of #206 it is
+> returned *permanently*, with the message text `"Server error"`, for
+> `backlightControl`, `colorToneControl` and `getDeviceInformation` — while
+> `getTVStates` and `getVideoStates` answer normally on the same TV, in the same
+> state. So on older models it also stands in for "this method is not usable
+> here", where a Frame 2024 would answer `-32601 Method not found`. Treat a
+> repeated `-32003` on one method as a capability signal, not a transient
+> failure. Note also that the code the TV sends and the message it attaches do
+> not line up with this table: `-32002` is our `ERROR_SERVER` constant, yet
+> `-32003` is the one whose message reads "Server error".
 
 ---
 
@@ -118,6 +133,52 @@ when calling each method with only the `AccessToken` (no extra params):
 | `contrastControl` / `brightnessControl` / `sharpnessControl` / `colorControl` / `tintControl` | ✅ | `<field>`: int | `<field>` | **Writable** (earlier "read-only" was wrong). Get with no params; set with `{"<field>": n}`. Ranges (Frame 2024/2025): contrast 0–50, color 0–50, sharpness 0–20, brightness −5…5, tint −15…15. Write is picture-mode gated → `-32002` in Dynamic/HDR-dynamic; Standard/Movie/Filmmaker accept it. |
 | `directChannelControl` | ❌ | `atvDtv` + `airCable` + `channelNum` | — | Not implemented on Frame 2024 (Frames have no tuner anyway). |
 | `USBSourceControl` / `RVUSourceControl` / `ambientModeControl` | ❌ | — | — | Not implemented on Frame 2024. May exist on other models. |
+
+### Methods used by this integration but absent from the enumeration above
+
+Added here because the integration calls them and their behaviour differs by
+model generation:
+
+| Method | Setter param | Read returns | Notes |
+|---|---|---|---|
+| `backlightControl` | `backlight`: int (0–50) | `backlight` | Panel backlight. `-32003` on the 2018 set of #206. |
+| `colorToneControl` | `colorTone` | `colorTone` | White balance preset. `-32003` on the same TV. |
+| `getDeviceInformation` | — | `modelID`, `FWVersion` | Read once after pairing to gate model-dependent features. `-32003` on the same TV, so those installs keep their last known model/firmware. |
+
+---
+
+## Pre-2020 models (2019 and earlier)
+
+**No public documentation exists for this generation's method set.** Samsung
+publishes IP command lists only for the commercial Wall PRO / Wall LUX panels;
+the consumer-side integrator drivers (RTI, Crestron, AMX, Allonis) document the
+port, the required TV settings and a variable list, but not the JSON-RPC
+methods. Everything below is therefore empirical, from the single 2018 TV in
+[#206](https://github.com/TheFab21/ha-samsungtv-smart/issues/206) — treat it as
+one data point, not a specification.
+
+**UE50NU8005 (2018, Tizen ~4.0)**
+
+| | |
+|---|---|
+| Port | **1515** — nothing answers on 1516 |
+| TLS | Negotiates a **weak DH group**; the handshake fails at OpenSSL's default security level and needs the `@SECLEVEL=0` retry. Both this and the port had to be right for pairing to succeed. |
+| `createAccessToken` | ✅ — same flow, same on-screen prompt |
+| `getTVStates` | ✅ |
+| `getVideoStates` | ✅ — but returns fewer fields: contrast, brightness and sharpness are present, **tint is not** |
+| `backlightControl` | ❌ `-32003` |
+| `colorToneControl` | ❌ `-32003` |
+| `getDeviceInformation` | ❌ `-32003` |
+
+The reporter noted that RTI's driver documentation describes **different
+variable sets by model year** ("pre-2024 TVs use the standard variables,
+post-2024 use the new ones"), which fits: the picture controls exposed through
+`getVideoStates` work, while the separately-addressed `backlightControl` and
+`colorToneControl` do not exist in a usable form on that generation.
+
+Practical consequence: on a pre-2020 TV, expect the state reads and the
+`getVideoStates` sliders to work, and the backlight / colour-tone entities to
+stay permanently unavailable.
 
 ### RemoteKey values (`remoteKeyControl`)
 
