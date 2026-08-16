@@ -372,8 +372,10 @@ Control server.
 
 - **New:** the `getVideoStates` payload is logged when its shape changes,
   separating fields the TV omitted from fields it returned in a form the slider
-  cannot use — a picture slider sitting "unavailable" can now be traced to
-  which of the two it is.
+  cannot use. This immediately settled a real question on a 2018 model
+  ([#206](https://github.com/TheFab21/ha-samsungtv-smart/issues/206)): Colour
+  and Tint *are* readable there, but the TV drops them from the reply in some
+  picture modes, so those two sliders legitimately come and go.
 
 - **Fix:** the local remote-key fallback for picture mode is resolved by mode
   id, and by a language-independent match on the display name when the TV
