@@ -191,52 +191,73 @@ point, not a specification.
 | TLS | Negotiates a **weak DH group**; the handshake fails at OpenSSL's default security level and needs the `@SECLEVEL=0` retry. Both this and the port had to be right for pairing to succeed. |
 | `createAccessToken` | ✅ — same flow, same on-screen prompt |
 | `getTVStates` | ✅ |
-| `getVideoStates` | ✅ — the method answers. **Which fields it returns is unknown**, see below. |
+| `getVideoStates` | ✅ — **all five fields**, values as numeric strings. `color` and `tint` come and go with the picture mode; see below. |
 | `backlightControl` | ❌ `-32003` |
 | `colorToneControl` | ❌ `-32003` |
 | `getDeviceInformation` | ❌ `-32003` |
 
-**Open question — do Color and Tint work on this generation?** On that TV the
-Contrast and Brightness sliders worked while Tint showed as unavailable.
+**Answered: Color and Tint work — but only in some picture modes.** Two
+readings from the same 2018 TV, two minutes apart:
 
-The **leading hypothesis is no longer that the field is missing.** A slider also
-goes unavailable when the field *is* returned but cannot be parsed as an
-integer: `native_value` does `int(raw)` and yields `None` on failure, and
-`available` requires a value. Samsung documents **tint as an `R15`–`G15` token**
-— non-numeric, button-stepped, no slider — on at least one generation. A TV
-answering `{"tint": "G15"}` would therefore produce exactly what was observed:
-Contrast and Brightness (plain integers) working, Tint unavailable, and nothing
-in the log to say why.
+```text
+18:42:15  {'brightness': '0', 'color': '20', 'contrast': '50', 'sharpness': '0', 'tint': '0'}
+          (absent: nothing | present but not an integer: nothing)
 
-Samsung's own **Wall PRO / Wall LUX IP command lists** document these methods
-with ranges that do not match ours either — `colorControl` 0–100,
-`tintControl` −50…50, contrast/brightness/sharpness 0–100 — against the
-Frame-2024-measured 0–50 / −5…5 / 0–20 / 0–50 / −15…15 hardcoded in
-`IP_CONTROL_PICTURE_SETTINGS`. Those lists cover commercial LED panels, not old
-consumer TVs, so they are not proof for a 2018 set; they do show the value
-formats and scales are not universal.
+18:44:10  {'brightness': '0', 'contrast': '50', 'sharpness': '0'}
+          (absent: color, tint | present but not an integer: nothing)
+```
 
-Instrumentation was added to separate the two cases: the coordinator now logs
-the `getVideoStates` payload once per change of shape, listing **absent** fields
-and **present-but-not-an-integer** fields separately. The next debug log from a
-pre-2020 TV says which it is. Until then, assume nothing: `colorControl` and
-`tintControl` are documented and may well work on older sets — and if the value
-is an `R`/`G` token, the read is fine and it is our entity type that is wrong.
+So the fields are **conditional, not missing**: this generation reports all five,
+then drops `color` and `tint` from the reply depending on TV state. Between the
+two readings the picture mode was cycled Dynamisk → Naturlig → Dynamisk →
+Standard, which points at **mode gating extending to reads** — consistent with
+the already-documented behaviour that *writing* these values is rejected with
+`-32002` in Dynamic/HDR-dynamic. Not conclusively proven: the same log shows
+`Picture mode 'Dynamisk' could not be confirmed`, so the panel's real mode at
+the second reading is unknown.
 
-One complication to expect when they do work: the **scales differ by
-generation**. The RTI driver notes a pre-2024 "standard variable set" against a
-2024/2025 one where brightness is 0–50 and **tint is an `R15`–`G15` token
-rather than an integer**. The ranges hardcoded in `IP_CONTROL_PICTURE_SETTINGS`
-(contrast 0–50, brightness −5…5, sharpness 0–20, color 0–50, tint −15…15) were
-measured on a Frame 2024, so they may be wrong for an older panel even where
-the method works.
+Practical consequence: those two sliders legitimately flap between available and
+unavailable on this hardware. A slider goes unavailable when its field is absent
+from the reply — which here reflects the TV, not a defect.
 
-What *is* measured is narrower: `backlightControl` and `colorToneControl` are
-separately-addressed methods that this TV rejects outright, so the Backlight and
-Colour Tone entities stay permanently unavailable on it. The reporter noted that
-RTI's driver documentation describes **different variable sets by model year**
-("pre-2024 TVs use the standard variables, post-2024 use the new ones"), which
-is consistent with that.
+> **Two hypotheses this disproved**, recorded so they are not re-tried:
+>
+> 1. *"The TV omits the fields on this generation."* It does not — the first
+>    reading has all five.
+> 2. *"Tint comes back as an `R15`/`G15` token that our integer entity cannot
+>    parse."* It does not, on this TV: tint reads `'0'`. Values arrive as
+>    **strings**, but they parse as integers. The token format documented by RTI
+>    for 2024/2025 panels did not appear here.
+
+Note that `-32003` is *not* how this surfaces: the fields simply vanish from an
+otherwise successful `getVideoStates` reply.
+
+**Scales still unverified.** Samsung's own Wall PRO / Wall LUX command lists give
+`colorControl` 0–100, `tintControl` −50…50 and contrast/brightness/sharpness
+0–100, against the Frame-2024-measured 0–50 / −5…5 / 0–20 / 0–50 / −15…15
+hardcoded in `IP_CONTROL_PICTURE_SETTINGS`. The 2018 readings above
+(contrast 50, color 20, tint 0, brightness 0, sharpness 0) sit inside both, so
+they discriminate nothing. Those lists also cover commercial LED panels, so they
+are not proof for a consumer set.
+
+What is separately measured: `backlightControl` and `colorToneControl` are
+distinct methods this TV rejects outright with `-32003`, so Backlight and Colour
+Tone stay permanently unavailable on it — unlike Color and Tint, which are only
+intermittently so.
+
+### Picture mode ids are not standard on this generation
+
+The same log shows this TV reporting **`modeEntertainment`** as the id for its
+"Dynamisk" (Dynamic) mode, not the `modeDynamic` seen on Frames:
+
+```text
+Picture mode 'Dynamisk' sent via custom.picturemode (id form: modeEntertainment)
+Picture mode 'Dynamisk' also sent via WS key KEY_DYNAMIC
+```
+
+So a lookup table keyed on the four canonical ids is not sufficient. The
+remote-key fallback resolves the *display name* by stem (`dynam` → `KEY_DYNAMIC`)
+precisely for cases like this, and it is what worked here.
 
 ### RemoteKey values (`remoteKeyControl`)
 
