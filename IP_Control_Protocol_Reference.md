@@ -191,12 +191,12 @@ point, not a specification.
 | TLS | Negotiates a **weak DH group**; the handshake fails at OpenSSL's default security level and needs the `@SECLEVEL=0` retry. Both this and the port had to be right for pairing to succeed. |
 | `createAccessToken` | ✅ — same flow, same on-screen prompt |
 | `getTVStates` | ✅ |
-| `getVideoStates` | ✅ — **all five fields**, values as numeric strings. `color` and `tint` come and go with the picture mode; see below. |
+| `getVideoStates` | ✅ — **all five fields**, values as numeric strings. `color` and `tint` are dropped from the reply on inputs classified as PC; see below. |
 | `backlightControl` | ❌ `-32003` |
 | `colorToneControl` | ❌ `-32003` |
 | `getDeviceInformation` | ❌ `-32003` |
 
-**Answered: Color and Tint work — but only in some picture modes.** Two
+**Answered: Color and Tint work — but not on inputs classified as PC.** Two
 readings from the same 2018 TV, two minutes apart:
 
 ```text
@@ -207,20 +207,23 @@ readings from the same 2018 TV, two minutes apart:
           (absent: color, tint | present but not an integer: nothing)
 ```
 
-So the fields are **conditional, not missing**: this generation reports all five,
-then drops `color` and `tint` from the reply depending on TV state. Between the
-two readings the picture mode was cycled Dynamisk → Naturlig → Dynamisk →
-Standard, which points at **mode gating extending to reads** — consistent with
-the already-documented behaviour that *writing* these values is rejected with
-`-32002` in Dynamic/HDR-dynamic. Not conclusively proven: the same log shows
-`Picture mode 'Dynamisk' could not be confirmed`, so the panel's real mode at
-the second reading is unknown.
+So the fields are **conditional, not missing**. The condition was established by
+direct test: with a games console on HDMI, Color and Tint are present in every
+picture mode; switching to an HDMI input whose connected device is classified as
+**PC**, both vanish. The TV switches to a PC/graphics pipeline there — it also
+cuts the picture mode list down (four modes on the console input, two on PC) and
+stops reporting a current picture mode at all.
 
-Practical consequence: those two sliders legitimately flap between available and
-unavailable on this hardware. A slider goes unavailable when its field is absent
-from the reply — which here reflects the TV, not a defect.
+Note the reading order in the log above is misleading on its own: the fields
+disappear at 18:44:10 while the input is only *reported* as PC at 18:44:46. The
+input in that log comes from SmartThings, whose lag is the subject of the same
+report — the panel had already switched.
 
-> **Two hypotheses this disproved**, recorded so they are not re-tried:
+Practical consequence: those two sliders legitimately come and go with the input,
+not with anything the integration does. Re-classifying the input on the TV
+(Source → device type → anything other than PC) restores them.
+
+> **Three hypotheses this disproved**, recorded so they are not re-tried:
 >
 > 1. *"The TV omits the fields on this generation."* It does not — the first
 >    reading has all five.
@@ -228,6 +231,9 @@ from the reply — which here reflects the TV, not a defect.
 >    parse."* It does not, on this TV: tint reads `'0'`. Values arrive as
 >    **strings**, but they parse as integers. The token format documented by RTI
 >    for 2024/2025 panels did not appear here.
+> 3. *"Reads are picture-mode gated, like writes are."* They are not. Cycling
+>    picture modes on a non-PC input changes nothing; the input classification
+>    is what matters.
 
 Note that `-32003` is *not* how this surfaces: the fields simply vanish from an
 otherwise successful `getVideoStates` reply.
@@ -244,6 +250,26 @@ What is separately measured: `backlightControl` and `colorToneControl` are
 distinct methods this TV rejects outright with `-32003`, so Backlight and Colour
 Tone stay permanently unavailable on it — unlike Color and Tint, which are only
 intermittently so.
+
+### Input classification changes what the TV reports
+
+Beyond `getVideoStates` dropping `color`/`tint`, an HDMI input classified as
+**PC** on a pre-2020 set also:
+
+- restricts the picture mode list (four modes on a console input, two on PC), and
+- reports **no current picture mode at all**, which reaches Home Assistant as
+  unknown.
+
+None of this is signalled as an error; the fields simply stop being there. Any
+capability probe on this protocol therefore has to account for the active input,
+not just the model and the picture mode.
+
+> **Unused local value:** `getTVStates.inputSource` is read every few seconds
+> over IP Control and is already surfaced as the *Input Source* diagnostic
+> sensor. `media_player.source` still comes from SmartThings, which lags by tens
+> of seconds and misses input changes made with the TV's own remote (#206). The
+> faster value is therefore already in hand for any paired TV; switching the
+> media player to prefer it is unexplored.
 
 ### Picture mode ids are not standard on this generation
 
