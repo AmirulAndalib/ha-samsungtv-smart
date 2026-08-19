@@ -187,6 +187,7 @@ from .picture_mode_keys import picture_mode_ws_key
 from .token_notify import (
     METHOD_IP_CONTROL,
     METHOD_LOCAL,
+    METHOD_SMARTTHINGS,
     clear_token_problem,
     notify_token_problem,
 )
@@ -221,6 +222,15 @@ KEYPRESS_MIN_DELAY = 0.2
 # #40). Mirrors the manual "home, wait, source" workaround.
 SOURCE_WAKE_DELAY = 1.5
 MAX_ST_ERROR_COUNT = 4
+# Consecutive authorization failures from SmartThings before we treat the
+# device as gone rather than the cloud as flaky, and slow the poll right down.
+MAX_ST_AUTH_ERROR_COUNT = 3
+# Poll interval (seconds) once SmartThings has refused the device id. A 403 is
+# not transient -- the id is wrong until the user reconfigures -- so retrying
+# every 5s only burns API quota and stretches the update cycle (#: a repaired
+# TV produced 1591 refusals in two hours). Long enough to be harmless, short
+# enough that a fix is noticed without a restart.
+ST_POLL_AUTH_ERROR_INTERVAL = 300
 MEDIA_TYPE_BROWSER = "browser"
 MEDIA_TYPE_KEY = "send_key"
 MEDIA_TYPE_TEXT = "send_text"
@@ -761,6 +771,7 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             )
 
         self._st_error_count = 0
+        self._st_auth_error_count = 0
         self._st_last_exc = None
         self._st_sources_loaded = False
         # SmartThings poll throttling: the local WebSocket is the primary state
@@ -2005,7 +2016,12 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         if wake_edge:
             self._st_last_poll = now
             return True
-        if self._state == MediaPlayerState.ON:
+        if self._st_auth_error_count >= MAX_ST_AUTH_ERROR_COUNT:
+            # SmartThings is refusing this device id outright. Keep a slow
+            # heartbeat so a reconfigure is picked up without a restart, but
+            # stop polling at the normal cadence.
+            interval = ST_POLL_AUTH_ERROR_INTERVAL
+        elif self._state == MediaPlayerState.ON:
             interval = self._st_poll_on_interval
         else:
             interval = ST_POLL_OFF_INTERVAL
@@ -2013,6 +2029,20 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             self._st_last_poll = now
             return True
         return False
+
+    @staticmethod
+    def _st_error_is_authorization(exc: Exception) -> bool:
+        """True when SmartThings refused the device rather than merely failing.
+
+        pysmartthings does not expose a stable exception class for this, so the
+        check is deliberately loose: the class name and the message are both
+        inspected. A false positive only slows polling down and shows a notice
+        the user can dismiss; a false negative just keeps today's behaviour.
+        """
+        text = f"{type(exc).__name__} {exc}".lower()
+        return any(
+            marker in text for marker in ("forbidden", "unauthorized", "401", "403")
+        )
 
     async def _async_st_update(self, **kwargs) -> bool | None:
         """Update SmartThings state of device."""
@@ -2041,10 +2071,41 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
                     exc,
                 )
             self._st_last_exc = exc
+            self._note_st_auth_error(exc)
             return False
 
         self._st_last_exc = None
+        if self._st_auth_error_count:
+            self._log.info(
+                "%s - SmartThings is answering again, resuming normal polling",
+                self.entity_id,
+            )
+            self._st_auth_error_count = 0
+            clear_token_problem(self.hass, self._entry_id, METHOD_SMARTTHINGS)
         return True
+
+    def _note_st_auth_error(self, exc: Exception) -> None:
+        """Count an authorization refusal and, past the threshold, act on it."""
+        if not self._st_error_is_authorization(exc):
+            self._st_auth_error_count = 0
+            return
+        if self._st_auth_error_count >= MAX_ST_AUTH_ERROR_COUNT:
+            return
+        self._st_auth_error_count += 1
+        if self._st_auth_error_count < MAX_ST_AUTH_ERROR_COUNT:
+            return
+        self._log.error(
+            "%s - SmartThings refused this device %d times in a row (%s). The "
+            "stored device id is probably no longer valid -- this happens "
+            "after a mainboard repair, or when the TV is re-added in the "
+            "SmartThings app. Slowing polling to %ds; reconfigure the "
+            "integration to select the TV again.",
+            self.entity_id,
+            self._st_auth_error_count,
+            exc,
+            ST_POLL_AUTH_ERROR_INTERVAL,
+        )
+        notify_token_problem(self.hass, self._entry_id, METHOD_SMARTTHINGS, self._name)
 
     async def async_update(self):
         """Update state of device."""
