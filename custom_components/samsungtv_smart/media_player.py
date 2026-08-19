@@ -2101,8 +2101,8 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             "%s - SmartThings refused this device %d times in a row (%s). The "
             "stored device id is probably no longer valid -- this happens "
             "after a mainboard repair, or when the TV is re-added in the "
-            "SmartThings app. Slowing polling to %ds; reconfigure the "
-            "integration to select the TV again.",
+            "SmartThings app. Slowing polling to %ds; fix it under "
+            "Reconfigure > SmartThings device.",
             self.entity_id or self._name,
             self._st_auth_error_count,
             exc,

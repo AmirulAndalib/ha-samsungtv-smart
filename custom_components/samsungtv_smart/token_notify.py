@@ -87,8 +87,8 @@ _MESSAGES: dict[str, dict[str, str]] = {
             "SmartThings app **first** — there is nothing for Home Assistant "
             "to select until it appears there.\n\n"
             "To fix it: open **Settings → Devices & services → Samsung TV "
-            "Smart → Reconfigure**, and select the TV again in the SmartThings "
-            "device list so the new id is stored.\n\n"
+            "Smart → Reconfigure → SmartThings device**, and pick the TV again "
+            "so the new id is stored. Your entities and history are kept.\n\n"
             "Polling has been slowed down until it works again, and this "
             "notice clears itself automatically."
         ),
@@ -133,9 +133,9 @@ _MESSAGES: dict[str, dict[str, str]] = {
             "associez-le **d'abord** dans l'application SmartThings : Home "
             "Assistant n'a rien à sélectionner tant qu'il n'y apparaît pas.\n\n"
             "Pour corriger : ouvrez **Paramètres → Appareils et services → "
-            "Samsung TV Smart → Reconfigurer**, et sélectionnez à nouveau le "
-            "téléviseur dans la liste SmartThings pour enregistrer le nouvel "
-            "identifiant.\n\n"
+            "Samsung TV Smart → Reconfigurer → Appareil SmartThings**, et "
+            "sélectionnez à nouveau le téléviseur pour enregistrer le nouvel "
+            "identifiant. Vos entités et votre historique sont conservés.\n\n"
             "Les interrogations ont été espacées en attendant, et cette "
             "notification disparaît automatiquement."
         ),
