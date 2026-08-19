@@ -237,19 +237,20 @@ class SamsungTVSmartOAuth2FlowHandler(
         already points at, and a user re-selecting the same TV must not be told
         it is "already used" by itself.
         """
-        current = self._reconfigure_entry_id()
+        # NB: computed inline rather than via a helper. Home Assistant's
+        # ConfigFlow base class already owns the name `_reconfigure_entry_id`
+        # (a property that _get_reconfigure_entry reads), so defining a method
+        # of that name shadowed it and broke every reconfigure step with
+        # UnknownEntry, not just this one.
+        current = (
+            self.context.get("entry_id") if self.source == SOURCE_RECONFIGURE else None
+        )
         for entry in self._async_current_entries():
             if entry.entry_id == current:
                 continue
             if entry.data.get(CONF_DEVICE_ID, "") == devices_id:
                 return True
         return False
-
-    def _reconfigure_entry_id(self) -> str | None:
-        """Return the entry id being reconfigured, or None outside that flow."""
-        if self.source != SOURCE_RECONFIGURE:
-            return None
-        return self.context.get("entry_id")
 
     def _remove_stdev_used(self, devices_list: Dict[str, Any]) -> Dict[str, Any]:
         """Remove entry already used."""
