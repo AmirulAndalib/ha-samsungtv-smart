@@ -58,6 +58,14 @@
       "reauth_confirm": {
         "title": "Re-authentication Required",
         "description": "Your SmartThings authentication has expired. Click Submit to sign in again."
+      },
+      "reconfigure_st_device": {
+        "title": "SmartThings eszköz",
+        "description": "Válassza ki a tévéhez tartozó SmartThings eszközt.\n\nJelenleg: **{current}**\n\nA javított, visszaállított, vagy a SmartThings alkalmazásból eltávolított és újra hozzáadott tévé **új azonosítót** kap, a régit pedig *Forbidden* hibával utasítja el. Az itteni újraválasztás megőrzi az entitásokat és az előzményeket.",
+        "data": {
+          "st_devices": "SmartThings eszköz",
+          "device_id": "SmartThings eszközazonosító"
+        }
       }
     },
     "error": {
@@ -79,7 +87,10 @@
       "missing_scopes": "The granted permissions are insufficient. Please ensure you grant all requested permissions.",
       "reauth_account_mismatch": "The account used for re-authentication doesn't match the original account.",
       "reauth_successful": "Re-authentication successful.",
-      "reauth_failed": "Re-authentication failed."
+      "reauth_failed": "Re-authentication failed.",
+      "st_device_updated": "SmartThings eszköz frissítve. Az integráció újratöltődik.",
+      "st_not_configured": "A SmartThings nincs beállítva ehhez a tévéhez.",
+      "st_device_missing": "Nem lett SmartThings eszköz kiválasztva."
     },
     "create_entry": {
       "default": "Successfully configured {name}"

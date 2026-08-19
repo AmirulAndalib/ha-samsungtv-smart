@@ -2067,7 +2067,10 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
                 self._log.warning(
                     "%s - SmartThings update failed, continuing with local"
                     " control only: %s",
-                    self.entity_id,
+                    # entity_id is still None during setup, which logged a
+                    # bare "None - ..." line right when a first-run failure is
+                    # most likely to be read.
+                    self.entity_id or self._name,
                     exc,
                 )
             self._st_last_exc = exc
@@ -2078,7 +2081,7 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         if self._st_auth_error_count:
             self._log.info(
                 "%s - SmartThings is answering again, resuming normal polling",
-                self.entity_id,
+                self.entity_id or self._name,
             )
             self._st_auth_error_count = 0
             clear_token_problem(self.hass, self._entry_id, METHOD_SMARTTHINGS)
@@ -2098,9 +2101,9 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             "%s - SmartThings refused this device %d times in a row (%s). The "
             "stored device id is probably no longer valid -- this happens "
             "after a mainboard repair, or when the TV is re-added in the "
-            "SmartThings app. Slowing polling to %ds; reconfigure the "
-            "integration to select the TV again.",
-            self.entity_id,
+            "SmartThings app. Slowing polling to %ds; fix it under "
+            "Reconfigure > SmartThings device.",
+            self.entity_id or self._name,
             self._st_auth_error_count,
             exc,
             ST_POLL_AUTH_ERROR_INTERVAL,

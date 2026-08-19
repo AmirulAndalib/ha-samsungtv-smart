@@ -10,7 +10,12 @@ from typing import Any, Dict
 import voluptuous as vol
 
 from homeassistant.components.binary_sensor import DOMAIN as BS_DOMAIN
-from homeassistant.config_entries import ConfigEntry, ConfigFlowResult, OptionsFlow
+from homeassistant.config_entries import (
+    SOURCE_RECONFIGURE,
+    ConfigEntry,
+    ConfigFlowResult,
+    OptionsFlow,
+)
 from homeassistant.const import (
     ATTR_DEVICE_ID,
     CONF_API_KEY,
@@ -225,11 +230,26 @@ class SamsungTVSmartOAuth2FlowHandler(
         return {"scope": "r:devices:* x:devices:*"}
 
     def _stdev_already_used(self, devices_id) -> bool:
-        """Check if a device_id is in HA config."""
+        """Check if a device_id is used by ANOTHER config entry.
+
+        The entry being reconfigured is skipped: when re-picking its own
+        SmartThings device, the candidate list must not exclude the device it
+        already points at, and a user re-selecting the same TV must not be told
+        it is "already used" by itself.
+        """
+        current = self._reconfigure_entry_id()
         for entry in self._async_current_entries():
+            if entry.entry_id == current:
+                continue
             if entry.data.get(CONF_DEVICE_ID, "") == devices_id:
                 return True
         return False
+
+    def _reconfigure_entry_id(self) -> str | None:
+        """Return the entry id being reconfigured, or None outside that flow."""
+        if self.source != SOURCE_RECONFIGURE:
+            return None
+        return self.context.get("entry_id")
 
     def _remove_stdev_used(self, devices_list: Dict[str, Any]) -> Dict[str, Any]:
         """Remove entry already used."""
@@ -674,6 +694,7 @@ class SamsungTVSmartOAuth2FlowHandler(
             menu_options=[
                 "reconfigure_connection",
                 "reconfigure_auth",
+                "reconfigure_st_device",
                 "reconfigure_ip_control",
             ],
         )
@@ -755,6 +776,89 @@ class SamsungTVSmartOAuth2FlowHandler(
         if result != RESULT_SUCCESS:
             return await self._async_show_auth_form(errors=result)
         return self._apply_reconfigure_and_reload()
+
+    async def async_step_reconfigure_st_device(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Re-select which SmartThings device this entry points at.
+
+        The device id was previously written once, when the entry was created,
+        and never revisited. A TV that re-registers in SmartThings — after a
+        mainboard repair, or after being removed and re-added in the app — gets
+        a NEW id, so the stored one is refused with "Forbidden" forever and the
+        only way out was deleting and recreating the entry, losing entity ids
+        and history with it.
+        """
+        entry = self._get_reconfigure_entry()
+        self._api_key = entry.data.get(CONF_API_KEY)
+        if not self._api_key and entry.data.get(CONF_AUTH_METHOD) == AUTH_METHOD_OAUTH:
+            oauth_token = entry.data.get(CONF_OAUTH_TOKEN)
+            if isinstance(oauth_token, dict):
+                self._api_key = oauth_token.get("access_token")
+        if not self._api_key:
+            return self.async_abort(reason="st_not_configured")
+
+        if user_input is None:
+            # Ask the account what it has now. The current entry is excluded
+            # from the "already used" filter, so its own device stays listed.
+            result = await self._get_st_deviceid()
+            if result != RESULT_SUCCESS:
+                return self.async_show_form(
+                    step_id="reconfigure_st_device",
+                    data_schema=vol.Schema({vol.Required(CONF_DEVICE_ID): str}),
+                    errors={CONF_BASE: result},
+                    description_placeholders={
+                        "current": self._current_st_device(entry)
+                    },
+                )
+            if self._st_devices_schema:
+                return self.async_show_form(
+                    step_id="reconfigure_st_device",
+                    data_schema=self._st_devices_schema,
+                    description_placeholders={
+                        "current": self._current_st_device(entry)
+                    },
+                )
+            # Exactly one candidate: _get_st_deviceid already picked it, but
+            # confirm rather than rewrite the entry behind the user's back.
+            return self.async_show_form(
+                step_id="reconfigure_st_device",
+                data_schema=vol.Schema(
+                    {vol.Required(CONF_DEVICE_ID, default=self._device_id): str}
+                ),
+                description_placeholders={"current": self._current_st_device(entry)},
+            )
+
+        device_id = user_input.get(CONF_ST_DEVICE) or user_input.get(CONF_DEVICE_ID)
+        if not device_id:
+            return self.async_abort(reason="st_device_missing")
+        if self._stdev_already_used(device_id):
+            return self.async_show_form(
+                step_id="reconfigure_st_device",
+                data_schema=vol.Schema({vol.Required(CONF_DEVICE_ID): str}),
+                errors={CONF_BASE: RESULT_ST_DEVICE_USED},
+                description_placeholders={"current": self._current_st_device(entry)},
+            )
+
+        _LOGGER.info(
+            "SmartThings device for %s changed from %s to %s",
+            entry.title,
+            entry.data.get(CONF_DEVICE_ID) or "(none)",
+            device_id,
+        )
+        # Data-only update; the update listener schedules the reload, and
+        # CONF_DEVICE_ID is not in _NO_RELOAD_DATA_KEYS so the SmartThings
+        # client is rebuilt with the new id.
+        return self.async_update_and_abort(
+            entry,
+            data_updates={CONF_DEVICE_ID: device_id},
+            reason="st_device_updated",
+        )
+
+    @staticmethod
+    def _current_st_device(entry: ConfigEntry) -> str:
+        """Human-readable current device id, for the form description."""
+        return entry.data.get(CONF_DEVICE_ID) or "(none)"
 
     async def async_step_reconfigure_ip_control(
         self, user_input: dict[str, Any] | None = None

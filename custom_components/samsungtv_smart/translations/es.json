@@ -58,6 +58,14 @@
       "reauth_confirm": {
         "title": "Reautenticación requerida",
         "description": "Tu autenticación de SmartThings ha expirado. Haz clic en Enviar para volver a iniciar sesión."
+      },
+      "reconfigure_st_device": {
+        "title": "Dispositivo SmartThings",
+        "description": "Seleccione el dispositivo SmartThings correspondiente a este televisor.\n\nActualmente: **{current}**\n\nUn televisor reparado, restablecido o eliminado y vuelto a añadir en la aplicación SmartThings recibe un **nuevo identificador**, y el anterior se rechaza con *Forbidden*. Volver a seleccionarlo aquí conserva sus entidades e historial.",
+        "data": {
+          "st_devices": "Dispositivo SmartThings",
+          "device_id": "ID del dispositivo SmartThings"
+        }
       }
     },
     "error": {
@@ -79,7 +87,10 @@
       "missing_scopes": "Los permisos concedidos son insuficientes. Por favor, asegúrate de conceder todos los permisos solicitados.",
       "reauth_account_mismatch": "La cuenta utilizada para la reautenticación no coincide con la cuenta original.",
       "reauth_successful": "Reautenticación exitosa.",
-      "reauth_failed": "Error en la reautenticación."
+      "reauth_failed": "Error en la reautenticación.",
+      "st_device_updated": "Dispositivo SmartThings actualizado. La integración se está recargando.",
+      "st_not_configured": "SmartThings no está configurado para este televisor.",
+      "st_device_missing": "No se ha seleccionado ningún dispositivo SmartThings."
     },
     "create_entry": {
       "default": "{name} configurado correctamente"

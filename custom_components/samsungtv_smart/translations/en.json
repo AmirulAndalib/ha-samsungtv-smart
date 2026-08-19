@@ -61,7 +61,8 @@
         "menu_options": {
           "reconfigure_connection": "Connection (IP address & port)",
           "reconfigure_auth": "Authentication (OAuth2 / PAT / SmartThings)",
-          "reconfigure_ip_control": "IP Control (reliable power & pairing)"
+          "reconfigure_ip_control": "IP Control (reliable power & pairing)",
+          "reconfigure_st_device": "SmartThings device (re-link after a repair)"
         }
       },
       "reauth_confirm": {
@@ -97,6 +98,14 @@
       "reconfigure_ip_pair": {
         "title": "Pair IP Control",
         "description": "Pairs the TV's IP Control interface.\n\nBefore continuing:\n1. The TV must be ON and in NORMAL viewing — not Art Mode.\n2. Enable IP Remote: Settings → All Settings → Connections → Network → Expert Settings → Enable IP Remote.\n\nAccept the authorization prompt on the TV when it appears. Current status: {status}."
+      },
+      "reconfigure_st_device": {
+        "title": "SmartThings device",
+        "description": "Select which SmartThings device this TV corresponds to.\n\nCurrently: **{current}**\n\nA TV that was repaired, reset, or removed and re-added in the SmartThings app gets a **new device id**, and the old one is refused with *Forbidden*. Re-selecting it here keeps your entities and history.",
+        "data": {
+          "st_devices": "SmartThings device",
+          "device_id": "SmartThings device ID"
+        }
       }
     },
     "error": {
@@ -123,7 +132,10 @@
       "reauth_successful": "Re-authentication successful.",
       "reauth_failed": "Re-authentication failed.",
       "reconfigure_successful": "Configuration updated.",
-      "ip_control_pair_successful": "IP Control paired successfully. The access token has been stored."
+      "ip_control_pair_successful": "IP Control paired successfully. The access token has been stored.",
+      "st_device_updated": "SmartThings device updated. The integration is reloading.",
+      "st_not_configured": "SmartThings is not configured for this TV.",
+      "st_device_missing": "No SmartThings device was selected."
     },
     "create_entry": {
       "default": "Successfully configured {name}"
