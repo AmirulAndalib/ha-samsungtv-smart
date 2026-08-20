@@ -172,6 +172,8 @@ from .const import (
     SERVICE_ART_UPLOAD_BATCH,
     SERVICE_SELECT_PICTURE_MODE,
     SERVICE_SEND_TEXT,
+    SERVICE_START_HUE_SYNC,
+    SERVICE_STOP_HUE_SYNC,
     SIGNAL_CONFIG_ENTITY,
     ST_POLL_OFF_INTERVAL,
     STD_APP_LIST,
@@ -326,6 +328,16 @@ async def async_setup_entry(
         SERVICE_SELECT_PICTURE_MODE,
         {vol.Required(ATTR_PICTURE_MODE): cv.string},
         "async_select_picture_mode",
+    )
+    platform.async_register_entity_service(
+        SERVICE_START_HUE_SYNC,
+        {},
+        "async_start_hue_sync",
+    )
+    platform.async_register_entity_service(
+        SERVICE_STOP_HUE_SYNC,
+        {},
+        "async_stop_hue_sync",
     )
 
     # Frame Art Extended Services
@@ -3388,6 +3400,18 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
                 picture_mode,
                 mode_id or "unknown",
             )
+
+    async def async_start_hue_sync(self) -> None:
+        """Start Philips Hue Sync without opening the TV app."""
+        if not self._st:
+            raise HomeAssistantError("SmartThings is not configured for this TV")
+        await self._st.async_set_hue_sync(True)
+
+    async def async_stop_hue_sync(self) -> None:
+        """Stop Philips Hue Sync without opening the TV app."""
+        if not self._st:
+            raise HomeAssistantError("SmartThings is not configured for this TV")
+        await self._st.async_set_hue_sync(False)
 
     # ==========================================
     # Frame Art Extended Service Methods

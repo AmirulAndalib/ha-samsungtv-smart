@@ -49,6 +49,7 @@ This fork brings improved WebSocket stability, full Samsung Frame TV Art Mode su
 - Full Samsung Smart TV (Tizen OS) control via WebSocket
 - Power on/off, volume, source selection, app launching
 - SmartThings integration for enhanced status polling (channel info, picture mode, sound mode…)
+- Background Philips Hue Sync start/stop control on supported Samsung TVs
 - **Three SmartThings authentication methods**: OAuth2, Personal Access Token, or existing ST integration
 - **Samsung Frame TV Art Mode** — full artwork management via a dedicated async API
 - **Self-healing Art WebSocket** — auto-reconnect + a zombie-channel circuit breaker fix the long-standing "Art Mode turns off randomly, needs a reload" problem
@@ -504,6 +505,8 @@ These are called on the `media_player` entity.
 | `media_player.select_source` | Switch input source or launch an app |
 | `media_player.play_media` | Send a key command or launch a URL |
 | `samsungtv_smart.select_picture_mode` | Change picture mode |
+| `samsungtv_smart.start_hue_sync` | Start Philips Hue Sync without opening the TV app |
+| `samsungtv_smart.stop_hue_sync` | Stop Philips Hue Sync without opening the TV app |
 | `samsungtv_smart.send_text` | Type a text string into a native Tizen text field |
 | `remote.send_command` | Send raw key commands (via remote entity) |
 
@@ -527,6 +530,19 @@ target:
 data:
   text: "hello"
 ```
+
+**Starting Philips Hue Sync in the background:**
+
+```yaml
+action: samsungtv_smart.start_hue_sync
+target:
+  entity_id: media_player.samsung_tv
+```
+
+Use `samsungtv_smart.stop_hue_sync` with the same target to stop syncing.
+These services require SmartThings and a Samsung TV with the Philips Hue Sync
+TV app and `samsungvd.lightControl` capability. They do not launch the app or
+change the active input.
 
 > **Scope — read this before expecting it to work in streaming apps.** This uses
 > Samsung's `SendInputString` (the native **Tizen IME**). It only produces text
