@@ -14,6 +14,20 @@ select_picture_mode:
       selector:
         text:
 
+start_hue_sync:
+  name: Start Hue Sync
+  description: Start Philips Hue Sync without opening the app on the TV.
+  target:
+    entity:
+      integration: samsungtv_smart
+
+stop_hue_sync:
+  name: Stop Hue Sync
+  description: Stop Philips Hue Sync without opening the app on the TV.
+  target:
+    entity:
+      integration: samsungtv_smart
+
 send_text:
   name: Send Text
   description: >-

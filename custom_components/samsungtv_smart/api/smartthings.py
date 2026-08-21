@@ -19,6 +19,10 @@ CAP_AUDIO_VOLUME = "audioVolume"
 CAP_AUDIO_MUTE = "audioMute"
 CAP_TV_CHANNEL = "tvChannel"
 CAP_MEDIA_INPUT_SOURCE = "mediaInputSource"
+CAP_LIGHT_CONTROL = "samsungvd.lightControl"
+
+HUE_SYNC_MODE_OFF = "TurnOff"
+HUE_SYNC_MODE_ON = "TurnOn"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -953,6 +957,19 @@ class SmartThingsTV:
             )
         except Exception as err:
             self._log.error("Error selecting VD source: %s", err)
+            raise
+
+    async def async_set_hue_sync(self, enabled: bool) -> None:
+        """Start or stop Philips Hue Sync without opening the TV app."""
+        mode = HUE_SYNC_MODE_ON if enabled else HUE_SYNC_MODE_OFF
+        try:
+            await self._send_rest_command(
+                capability=CAP_LIGHT_CONTROL,
+                command="setLightControlMode",
+                arguments=[mode],
+            )
+        except Exception as err:
+            self._log.error("Error setting Hue Sync mode: %s", err)
             raise
 
     # ──────────────────────────────────────────────────────────────────────────
