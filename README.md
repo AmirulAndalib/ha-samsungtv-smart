@@ -38,6 +38,7 @@ This fork brings improved WebSocket stability, full Samsung Frame TV Art Mode su
 - [Automations & Tips](#automations--tips)
 - [Troubleshooting](#troubleshooting)
   - [Integration not appearing in Add Integration](#integration-not-appearing-in-add-integration)
+  - [SmartThings stops working: "Forbidden"](#smartthings-stops-working-forbidden-in-the-log)
   - [Picture mode does not change the TV at all](#picture-mode-does-not-change-the-tv-at-all)
   - [IP Control reports Art Mode "on" when it isn't](#ip-control-reports-art-mode-on-when-it-isnt)
 - [Credits](#credits)
@@ -360,13 +361,27 @@ each with its own job:
 > 
 ### Reconfigure
 
-To change connection or credentials after setup, open **Settings → Devices & Services → Samsung TV Smart → Reconfigure**. The flow is split into three clear sections so you only touch what you need:
+To change connection or credentials after setup, open **Settings → Devices & Services → Samsung TV Smart → Reconfigure**. The flow is split into clear sections so you only touch what you need:
 
 | Section | What it changes |
 |---|---|
 | **Connection** | TV IP address and WebSocket port (8001, or 8002 for SSL-only TVs). Use **8001** unless your TV only answers on **8002**. The integration also falls back between the two ports automatically at runtime if a firmware update filters the configured one. |
 | **Authentication** | The auth method (OAuth2 / Personal Access Token / SmartThings link). For OAuth2, selecting it starts the login flow immediately. |
-| **IP Control** | Pair the local JSON-RPC channel (port 1516) and, once paired, toggle **Enable IP Control** (reliable power on/off without SmartThings) and **Enable IP Control Art Mode** (⚠️ off by default — see the warning below). To pair, check *Pair now* with the TV **ON and in normal viewing (not Art Mode)** and accept the on-screen prompt. |
+| **SmartThings device** | Which SmartThings device this TV points at. Re-select it after the TV gets a **new device id** — see below. |
+| **IP Control** | Pair the local JSON-RPC channel (port 1516 on 2020+ models, 1515 on 2019 and earlier — both are tried) and, once paired, toggle **Enable IP Control** (reliable power on/off without SmartThings) and **Enable IP Control Art Mode** (⚠️ off by default — see the warning below). To pair, check *Pair now* with the TV **ON and in normal viewing (not Art Mode)** and accept the on-screen prompt. |
+
+> **When to use *SmartThings device*.** A TV re-registers in SmartThings under a
+> **new device id** after a mainboard repair, a factory reset, or being removed
+> and re-added in the SmartThings app. The stored id is then refused for good,
+> with `Forbidden` in the log and every cloud-only value (channel name, picture
+> mode, sound mode, power metering) frozen — while local control keeps working.
+>
+> Re-selecting the TV here writes the new id and reloads the integration, **keeping
+> your entities, their history and your automations**. Deleting and re-adding the
+> integration would not.
+>
+> If the TV has just been repaired or reset, link it in the SmartThings app
+> **first** — there is nothing to select until it appears there.
 
 > ⚠️ **Do not enable *Enable IP Control Art Mode*** unless you know your firmware handles it — it can break Art Mode entirely and may need a factory reset to recover (seen on QE55LS03D fw 2123). See [IP Control reports Art Mode "on" when it isn't](#ip-control-reports-art-mode-on-when-it-isnt).
 
@@ -962,6 +977,40 @@ default; SmartThings or IP Control also available).
 - Verify your API key/token has `Devices` permissions.
 - Check that your TV is registered and visible in the SmartThings app.
 - For OAuth2: confirm your Developer Portal app is still active and has the correct scopes (`r:devices:*`, `x:devices:*`).
+
+### SmartThings stops working: "Forbidden" in the log
+
+```text
+[192.168.1.50] Error updating SmartThings status: Forbidden
+media_player.your_tv - SmartThings refused this device 3 times in a row (Forbidden).
+```
+
+This means the stored **SmartThings device id no longer belongs to your account**
+— not that your API key or token is wrong. The tell: any *other* TV on the same
+credentials keeps working.
+
+It happens when the TV re-registers under a new id: a **mainboard repair or
+replacement**, a **factory reset**, being **removed and re-added** in the
+SmartThings app, or a change of owning account.
+
+What the integration does on its own:
+
+- local control (power, keys, sources, Art Mode) keeps working throughout — only
+  the cloud-only values pause;
+- after three refusals it **slows SmartThings polling to once every 5 minutes**
+  instead of every few seconds, and raises a notification explaining the cause;
+- both clear themselves the moment a poll succeeds, so a fix is picked up without
+  a restart.
+
+To fix it:
+
+1. If the TV was just repaired or reset, **link it in the SmartThings app first**.
+   Home Assistant has nothing to select until it appears there.
+2. Open **Settings → Devices & Services → Samsung TV Smart → Reconfigure →
+   SmartThings device** and pick the TV again.
+
+Your entities, history and automations are preserved — unlike deleting and
+re-adding the integration.
 
 ### OAuth2 — "Token refresh failed"
 
