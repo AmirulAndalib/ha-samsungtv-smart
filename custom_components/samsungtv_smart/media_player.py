@@ -3737,18 +3737,6 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             self._log.error("Frame Art: Error ensuring Art Mode: %s", ex)
             return False
 
-    async def _force_art_coordinator_refresh(self):
-        """Force immediate refresh of Frame Art coordinator after artwork changes."""
-        try:
-            coordinator = self.hass.data[DOMAIN][self._entry_id].get(
-                "frame_art_coordinator"
-            )
-            if coordinator:
-                await coordinator.async_request_refresh()
-                self._log.debug("Forced Frame Art coordinator refresh")
-        except Exception as ex:
-            self._log.debug("Could not force coordinator refresh: %s", ex)
-
     async def async_art_select_image(
         self,
         content_id: str,
@@ -3767,9 +3755,6 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         # Select the artwork
         try:
             await self._art_api.select_image(content_id, category_id, show)
-
-            # Force immediate update 🚀
-            await self._force_art_coordinator_refresh()
 
             return {"success": True, "content_id": content_id}
         except Exception as ex:
@@ -3824,9 +3809,6 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
                 self._log.info(
                     "Frame Art: Upload successful, content_id=%s", content_id
                 )
-
-                # Force immediate update 🚀
-                await self._force_art_coordinator_refresh()
 
                 # The TV often needs a while (sometimes minutes) to generate the
                 # thumbnail for a just-uploaded image, so the immediate batch
@@ -3906,7 +3888,6 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
 
         # Reflect the new art and fetch the (delayed) TV-side thumbnails.
         if result.get("uploaded"):
-            await self._force_art_coordinator_refresh()
             for content_id in result["uploaded"]:
                 self.hass.async_create_task(self._retry_new_thumbnail(content_id))
 
@@ -3946,8 +3927,6 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
                     "Frame Art: thumbnail for %s is now available (delayed retry)",
                     content_id,
                 )
-                # Nudge the gallery/sensor so it shows the new thumbnail now.
-                await self._force_art_coordinator_refresh()
                 return
         self._log.debug(
             "Frame Art: thumbnail for %s still unavailable after delayed retries",
@@ -3963,9 +3942,6 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             return {"error": "Can only delete user-uploaded content (MY-*)"}
         try:
             await self._art_api.delete(content_id)
-
-            # Force immediate update 🚀
-            await self._force_art_coordinator_refresh()
 
             return {"success": True}
         except Exception as ex:
