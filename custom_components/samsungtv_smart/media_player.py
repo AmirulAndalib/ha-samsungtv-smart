@@ -3409,10 +3409,12 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             await self._st.async_set_hue_sync(enabled)
         except SmartThingsCapabilityUnsupported as err:
             raise HomeAssistantError(
-                "Hue Sync is not available on this TV: it does not expose the "
-                f"{err} SmartThings capability. This is a property of the model "
-                "(reported on 2022 Frames), not a configuration problem — no "
-                "setting can enable it."
+                f"This TV does not currently expose the {err} SmartThings "
+                "capability, so Hue Sync cannot be controlled. Check that the "
+                "Philips Hue Sync TV app is installed on the TV and paired with "
+                "your Hue bridge — on some models the capability only appears "
+                "once it is set up. If it is already set up, the model does not "
+                "support this."
             ) from err
 
     async def async_start_hue_sync(self) -> None:

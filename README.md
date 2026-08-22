@@ -559,11 +559,13 @@ These services require SmartThings and a Samsung TV with the Philips Hue Sync
 TV app and `samsungvd.lightControl` capability. They do not launch the app or
 change the active input.
 
-> **Not every model has this capability**, and no setting can add it. Verified
-> working on an S95C; reported missing on a 2022 Frame (`QE65LS03BAUXXH`).
-> Calling the service on a TV without it raises *"Hue Sync is not available on
-> this TV"*. To check before trying, with your SmartThings token and device id
-> (both visible in *Download diagnostics*):
+> **Not every TV exposes this capability.** Verified working on an S95C;
+> reported absent on a 2022 Frame (`QE65LS03BAUXXH`). Two things can cause that,
+> and the error does not tell them apart: the model may not support it at all,
+> or the capability may only appear **once the Philips Hue Sync TV app is
+> installed on the TV and paired with a Hue bridge**. Set that up first, then
+> re-check. To check, with your SmartThings token and device id (both visible in
+> *Download diagnostics*):
 >
 > ```bash
 > curl -s -H "Authorization: Bearer YOUR_TOKEN" \
