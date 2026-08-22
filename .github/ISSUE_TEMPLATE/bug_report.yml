@@ -1,0 +1,157 @@
+name: Bug report
+description: Something does not work. Please fill every required field.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **This integration talks to hardware nobody else can see**, over four
+        different channels (local WebSocket, SmartThings cloud, UPnP, IP Control),
+        across TV generations that behave differently. Your report is the only
+        evidence available.
+
+        Please read **[Read before opening an issue](https://github.com/TheFab21/ha-samsungtv-smart/issues/224)**
+        first — it explains how to produce a usable log, and lists the checks that
+        regularly show the problem is not in this integration.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before filing
+      options:
+        - label: The same action **also fails in the SmartThings mobile app** — or is not available there, so it is not a comparison I can make.
+          required: false
+        - label: My TV shows as **online** in the SmartThings app.
+          required: false
+        - label: No ad-blocker or DNS filter (Pi-hole, AdGuard…) is blocking my **TV's** internet access.
+          required: false
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: >-
+        Be specific. "It does not work" covers an error in the UI, nothing at all
+        happening, the wrong thing happening, or it working once then stopping —
+        which are different bugs.
+      placeholder: |
+        I called samsungtv_smart.art_upload and the artwork appeared on the TV as
+        a grey rectangle with no preview. No error was shown in the UI.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Exactly what you did
+      description: >-
+        The service call from **Developer Tools → Actions → YAML mode**, or the
+        precise UI steps. This is what tells me which code path ran.
+      render: yaml
+      placeholder: |
+        action: samsungtv_smart.start_hue_sync
+        target:
+          entity_id: media_player.my_tv
+    validations:
+      required: true
+
+  - type: input
+    id: tv-model
+    attributes:
+      label: Full TV model reference
+      description: >-
+        The complete reference, not "a Frame" or "2022 model" — behaviour differs
+        by generation and even by firmware. It is on the back of the TV, or in
+        Settings → Support → About this TV.
+      placeholder: QE55LS03DAUXXH
+    validations:
+      required: true
+
+  - type: input
+    id: ha-version
+    attributes:
+      label: Home Assistant version
+      placeholder: "2026.8.1"
+    validations:
+      required: true
+
+  - type: input
+    id: integration-version
+    attributes:
+      label: Integration version
+      description: Shown in HACS. "latest" is not a version.
+      placeholder: 8.6.8
+    validations:
+      required: true
+
+  - type: input
+    id: last-working
+    attributes:
+      label: Last version where this worked
+      description: Leave empty if it never worked, or if you do not know.
+      placeholder: 8.6.4
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Debug log
+      description: |
+        Add this to `configuration.yaml`, **restart**, reproduce the problem once:
+
+        ```yaml
+        logger:
+          default: warning
+          logs:
+            custom_components.samsungtv_smart: debug
+        ```
+
+        Then attach the log **as a file** — *Settings → System → Logs → ⋮ →
+        Download full log*, or `config/home-assistant.log`. Drag it into this box.
+
+        ⚠️ **Do not paste the red error card** from the Logs page. It shows only
+        `ERROR` level and hides the lines that say what the TV actually answered,
+        which is the whole diagnosis.
+      placeholder: Drag the log file here, or paste the relevant section.
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics (optional but useful)
+      description: >-
+        *Settings → Devices & Services → Samsung TV Smart → ⋮ on your TV →
+        Download diagnostics*. Tokens and API keys are already redacted, so it is
+        safe to attach as-is. It shows how your integration is configured, which
+        the log does not.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: ai-assisted
+    attributes:
+      label: Was this report written with an AI assistant?
+      description: >-
+        Perfectly fine either way — some of the best-structured reports here were.
+        It is asked so that generated *hypotheses* are not read as measurements.
+      options:
+        - "No"
+        - "Yes — and I have marked anything I did not verify myself as a guess"
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+    validations:
+      required: false
