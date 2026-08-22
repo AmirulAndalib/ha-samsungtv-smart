@@ -24,6 +24,18 @@ CAP_LIGHT_CONTROL = "samsungvd.lightControl"
 HUE_SYNC_MODE_OFF = "TurnOff"
 HUE_SYNC_MODE_ON = "TurnOn"
 
+
+class SmartThingsCapabilityUnsupported(Exception):
+    """The TV does not expose the capability a command needs.
+
+    SmartThings answers 422 Unprocessable Entity for a command sent against a
+    capability the device does not implement — the same code seen when
+    samsungvd.pictureMode is addressed on a model that only has
+    custom.picturemode. It is a property of the model, not a transient failure,
+    so callers should surface it as "not supported here" rather than retry.
+    """
+
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -968,6 +980,21 @@ class SmartThingsTV:
                 command="setLightControlMode",
                 arguments=[mode],
             )
+        except ClientResponseError as err:
+            if err.status == 422:
+                # The capability is absent from this model's profile. Reported
+                # on a 2022 Frame (QE65LS03BAUXXH); the feature was developed
+                # against an S95C. Raised as its own type so the caller can say
+                # so plainly instead of surfacing a bare traceback.
+                self._log.warning(
+                    "Hue Sync is not available on this TV: SmartThings rejected "
+                    "%s with 422, which means the model does not expose that "
+                    "capability",
+                    CAP_LIGHT_CONTROL,
+                )
+                raise SmartThingsCapabilityUnsupported(CAP_LIGHT_CONTROL) from err
+            self._log.error("Error setting Hue Sync mode: %s", err)
+            raise
         except Exception as err:
             self._log.error("Error setting Hue Sync mode: %s", err)
             raise
