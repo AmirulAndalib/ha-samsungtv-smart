@@ -29,10 +29,12 @@ class SmartThingsCapabilityUnsupported(Exception):
     """The TV does not expose the capability a command needs.
 
     SmartThings answers 422 Unprocessable Entity for a command sent against a
-    capability the device does not implement — the same code seen when
+    capability absent from the device profile — the same code seen when
     samsungvd.pictureMode is addressed on a model that only has
-    custom.picturemode. It is a property of the model, not a transient failure,
-    so callers should surface it as "not supported here" rather than retry.
+    custom.picturemode. It is not a transient failure, so retrying is
+    pointless; but "absent" does not always mean "unsupported by the model",
+    since some capabilities only appear once the matching feature is set up on
+    the TV. Callers should say both rather than declare the model incapable.
     """
 
 
@@ -982,14 +984,16 @@ class SmartThingsTV:
             )
         except ClientResponseError as err:
             if err.status == 422:
-                # The capability is absent from this model's profile. Reported
-                # on a 2022 Frame (QE65LS03BAUXXH); the feature was developed
-                # against an S95C. Raised as its own type so the caller can say
-                # so plainly instead of surfacing a bare traceback.
+                # The capability is not in the device profile as SmartThings
+                # sees it. Reported on a 2022 Frame (QE65LS03BAUXXH); the
+                # feature was developed against an S95C. Whether it is missing
+                # for good or only until the Hue Sync TV app is set up is not
+                # something the error distinguishes, so the message says both.
                 self._log.warning(
-                    "Hue Sync is not available on this TV: SmartThings rejected "
-                    "%s with 422, which means the model does not expose that "
-                    "capability",
+                    "SmartThings rejected %s with 422: this TV does not expose "
+                    "that capability right now. It may be absent on the model, "
+                    "or only appear once the Hue Sync TV app is installed and "
+                    "paired with a bridge",
                     CAP_LIGHT_CONTROL,
                 )
                 raise SmartThingsCapabilityUnsupported(CAP_LIGHT_CONTROL) from err
