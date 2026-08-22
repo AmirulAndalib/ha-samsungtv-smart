@@ -559,6 +559,18 @@ These services require SmartThings and a Samsung TV with the Philips Hue Sync
 TV app and `samsungvd.lightControl` capability. They do not launch the app or
 change the active input.
 
+> **Not every model has this capability**, and no setting can add it. Verified
+> working on an S95C; reported missing on a 2022 Frame (`QE65LS03BAUXXH`).
+> Calling the service on a TV without it raises *"Hue Sync is not available on
+> this TV"*. To check before trying, with your SmartThings token and device id
+> (both visible in *Download diagnostics*):
+>
+> ```bash
+> curl -s -H "Authorization: Bearer YOUR_TOKEN" \
+>   https://api.smartthings.com/v1/devices/YOUR_DEVICE_ID \
+>   | grep -o 'samsungvd.lightControl' || echo "capability NOT present"
+> ```
+
 > **Scope — read this before expecting it to work in streaming apps.** This uses
 > Samsung's `SendInputString` (the native **Tizen IME**). It only produces text
 > while a **native Tizen text field** is open and focused — for example the

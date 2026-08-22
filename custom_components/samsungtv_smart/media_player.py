@@ -83,7 +83,7 @@ from .api.ipcontrol import (
 )
 from .api.samsungcast import SamsungCastTube
 from .api.samsungws import ArtModeStatus, SamsungTVAsyncRest, SamsungTVWS
-from .api.smartthings import SmartThingsTV, STStatus
+from .api.smartthings import SmartThingsCapabilityUnsupported, SmartThingsTV, STStatus
 from .api.upnp import SamsungUPnP
 from .const import (
     ATTR_BRIGHTNESS,
@@ -3401,17 +3401,27 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
                 mode_id or "unknown",
             )
 
-    async def async_start_hue_sync(self) -> None:
-        """Start Philips Hue Sync without opening the TV app."""
+    async def _async_set_hue_sync(self, enabled: bool) -> None:
+        """Start or stop Hue Sync, turning a missing capability into a clear error."""
         if not self._st:
             raise HomeAssistantError("SmartThings is not configured for this TV")
-        await self._st.async_set_hue_sync(True)
+        try:
+            await self._st.async_set_hue_sync(enabled)
+        except SmartThingsCapabilityUnsupported as err:
+            raise HomeAssistantError(
+                "Hue Sync is not available on this TV: it does not expose the "
+                f"{err} SmartThings capability. This is a property of the model "
+                "(reported on 2022 Frames), not a configuration problem — no "
+                "setting can enable it."
+            ) from err
+
+    async def async_start_hue_sync(self) -> None:
+        """Start Philips Hue Sync without opening the TV app."""
+        await self._async_set_hue_sync(True)
 
     async def async_stop_hue_sync(self) -> None:
         """Stop Philips Hue Sync without opening the TV app."""
-        if not self._st:
-            raise HomeAssistantError("SmartThings is not configured for this TV")
-        await self._st.async_set_hue_sync(False)
+        await self._async_set_hue_sync(False)
 
     # ==========================================
     # Frame Art Extended Service Methods
