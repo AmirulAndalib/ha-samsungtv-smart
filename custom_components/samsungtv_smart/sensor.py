@@ -63,6 +63,7 @@ from .const import (
     CONF_WS_NAME,
     DATA_ART_API,
     DATA_CFG,
+    DATA_IP_CONTROL_STATE_COORDINATOR,
     DEFAULT_PORT,
     DEFAULT_ST_POLL_ON_INTERVAL,
     DOMAIN,
@@ -188,12 +189,12 @@ class SamsungIPControlSensorDescription(SensorEntityDescription):
     source: str = "tv"
 
 
-# getTVStates fields exposed as diagnostic sensors. These particular fields
-# (inputSource, pictureMode, soundMode, pictureSize, speakerSelect, mute,
-# volume) mirror media_player / select state and are read-only over IP Control.
-# The getVideoStates fields (contrast/brightness/sharpness/color/tint) are NOT
-# here — they are settable `number` sliders (see number.py), written via their
-# <field>Control methods when the picture mode allows it.
+# getTVStates fields exposed as diagnostic sensors. Setter availability for
+# matching IP Control fields is model-dependent; these remain read-only sensor
+# entities even when a corresponding local setter (such as inputSourceControl)
+# is available. The getVideoStates fields (contrast/brightness/sharpness/color/
+# tint) are NOT here — they are settable `number` sliders (see number.py),
+# written via their <field>Control methods when the picture mode allows it.
 IP_CONTROL_STATE_SENSORS: tuple[SamsungIPControlSensorDescription, ...] = (
     # getTVStates
     SamsungIPControlSensorDescription(
@@ -587,6 +588,9 @@ async def async_setup_entry(  # noqa: C901
     # coordinator so each poll issues just two JSON-RPC calls for all 12.
     if _ip_control_active(entry):
         state_coordinator = IPControlStateCoordinator(hass, entry, host)
+        hass.data[DOMAIN][entry.entry_id][
+            DATA_IP_CONTROL_STATE_COORDINATOR
+        ] = state_coordinator
         entities.extend(
             IPControlStateSensor(
                 state_coordinator, entry, description, device_name, device_unique_id
@@ -602,6 +606,8 @@ async def async_setup_entry(  # noqa: C901
             device_name,
             len(IP_CONTROL_STATE_SENSORS),
         )
+    else:
+        hass.data[DOMAIN][entry.entry_id].pop(DATA_IP_CONTROL_STATE_COORDINATOR, None)
 
     if entities:
         async_add_entities(entities)

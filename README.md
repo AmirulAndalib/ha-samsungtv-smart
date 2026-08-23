@@ -302,7 +302,7 @@ After initial setup, click **Configure** on the integration card to access these
 
 | Option | Description |
 |---|---|
-| **Source list** | Define custom input sources (JSON: `{"HDMI 1": "KEY_HDMI1", ...}`) |
+| **Source list** | Define custom input sources (JSON: `{"HDMI 1": "KEY_HDMI1", ...}`); on supported IP Control TVs, local sources can use values such as `IP_HDMI1` |
 | **App list** | Define custom app shortcuts (JSON) |
 | **App load method** | How to load the app list: All, Default, or Disabled |
 | **App launch method** | Standard, Remote, or REST |
@@ -321,6 +321,29 @@ After initial setup, click **Configure** on the integration card to access these
 | **WS name** | Name shown on the TV when pairing (default: `[Home Assistant]`) |
 
 > **IP Control moved.** Pairing and the *Enable IP Control* / *Enable IP Control Art Mode* toggles are no longer in this Options screen — they now live under **Reconfigure → IP Control** (see [Reconfigure](#reconfigure) below).
+
+---
+#### Local source selection via IP Control
+
+On TVs that support `inputSourceControl`, input sources can be selected
+locally without SmartThings by using the `IP_` prefix in the Source list.
+
+For example:
+
+```yaml
+HDMI 1: IP_HDMI1
+HDMI 2: IP_HDMI2
+HDMI 3: IP_HDMI3
+HDMI 4: IP_HDMI4
+```
+
+The `IP_` prefix is removed before the value is sent to the TV, so
+`IP_HDMI4` calls `inputSourceControl` with `HDMI4`.
+
+IP Control must be paired and enabled under **Reconfigure → IP Control**.
+
+Support for `inputSourceControl` is model- and firmware-dependent.
+TVs that do not expose this method may return `-32601 "Method not found"`.
 
 ---
 ### How control works — and what *App launch method* actually does
@@ -351,7 +374,7 @@ each with its own job:
 |---|---|---|
 | **WebSocket** | Local, ports 8001/8002 | Primary control: power, keys, volume, sources, app launching, and Frame Art Mode. |
 | **SmartThings** | Cloud (OAuth2 / PAT) | Status polling (power, input, channel, picture/sound mode) and optional power-on. Read-mostly — not a local command channel. |
-| **IP Control** | Local JSON-RPC, port 1516 | Optional. Reliable power on/off without SmartThings, plus optional Art Mode control. Paired and toggled under [Reconfigure](#reconfigure). |
+| **IP Control** | Local JSON-RPC, port 1516 | Optional. Reliable power on/off without SmartThings, local source selection on supported TVs, plus optional Art Mode control. Paired and toggled under [Reconfigure](#reconfigure). |
 
 > The three layers are complementary, not alternatives. *App launch method* sits **on top of**
 > the WebSocket layer (two of its three values are WebSocket channels); it is not a fourth

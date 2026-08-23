@@ -503,15 +503,27 @@ class SamsungIPControl:
             "serialNumber": str(result.get("serialNumber", "")),
         }
 
+    async def async_set_input_source(self, value: str) -> str:
+        """Select an input source via local IP Control."""
+        result = await self._async_request(
+            "inputSourceControl",
+            {"inputSource": value},
+        )
+        response_value = result.get("inputSource", value)
+        if not isinstance(response_value, str) or not response_value:
+            raise SamsungIPControlError(f"invalid inputSource response: {result!r}")
+        return response_value
+
     async def async_get_tv_states(self) -> dict[str, Any]:
         """Return the TV's general state snapshot (read-only).
 
-        ``getTVStates`` reports, on a Frame 2024/2025:
+        ``getTVStates`` reports, on recent Samsung TVs:
         ``speakerSelect, volume, mute, pictureSize, pictureMode, soundMode,
-        inputSource``. These are all read-only over IP Control on consumer
-        Frames (the matching setters return ``-32601 "Method not found"``), so
-        this is exposed only as diagnostic sensors. Setting these values must
-        go through SmartThings / the WebSocket.
+        inputSource``. Availability of matching setters is model-dependent.
+        Some TVs may reject setters such as ``inputSourceControl`` with
+        ``-32601``, while others support direct local control. Setting values
+        without a supported local setter must go through SmartThings /
+        the WebSocket.
         """
         return await self._async_request("getTVStates")
 
