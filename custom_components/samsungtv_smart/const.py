@@ -41,6 +41,7 @@ DATA_OPTIONS = "options"
 DATA_ENTRY_DATA = "entry_data"  # Snapshot of entry.data to detect data changes
 DATA_ART_API = "art_api"  # Shared Frame Art API instance
 DATA_ART_CACHE = "art_cache"  # Shared ArtIdentifyCache instance (per entry)
+DATA_IP_CONTROL_STATE_COORDINATOR = "ip_control_state_coordinator"
 CONF_IS_FRAME_TV = "is_frame_tv"  # Persisted flag: TV confirmed as Frame TV
 # V7: persisted capability flags for the dedicated brightness / colour-temp
 # WebSocket requests. On TVs that don't respond (e.g. Frame 2024) we learn

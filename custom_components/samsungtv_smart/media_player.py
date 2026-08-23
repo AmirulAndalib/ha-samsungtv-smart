@@ -139,6 +139,7 @@ from .const import (
     CONF_WS_NAME,
     DATA_ART_API,
     DATA_CFG,
+    DATA_IP_CONTROL_STATE_COORDINATOR,
     DATA_OPTIONS,
     DEFAULT_APP,
     DEFAULT_PORT,
@@ -698,6 +699,9 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         # PowerState='standby' override or the potentially-stale art_api cache.
         self._ip_control_client: SamsungIPControl | None = None
         self._ip_control_token_cached: str | None = None
+        # Current physical input reported by the shared getTVStates coordinator.
+        # Also updated optimistically after a successful local source change.
+        self._ip_input_source: str | None = None
         self._ip_art_mode: bool | None = None
         # Consecutive transport-failure count; the cache is cleared once it
         # reaches IP_ART_MODE_MAX_FAILURES so a TV that stops answering on
@@ -1752,11 +1756,12 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         """
         if not self._source_list:
             return None
-        # source_list is {display_name: source_key} e.g. {"Home cinéma": "ST_HDMI3"}
-        # Check if source_id matches the ST_ suffix in any value
-        st_key = "ST_" + source_id
+        # source_list is {display_name: source_key}, e.g.
+        # {"Home cinéma": "ST_HDMI3"} or {"PlayStation": "IP_HDMI2"}
+        # Check if source_id matches a SmartThings or IP Control source key.
+        source_keys = (f"ST_{source_id}", f"IP_{source_id}")
         for display_name, source_key in self._source_list.items():
-            if source_key == st_key:
+            if source_key in source_keys:
                 return (display_name, source_key)
         # Also check for TV variant (dtv, digitalTv -> ST_TV)
         if source_id.upper() in ["DTV", "DIGITALTV", "TV"]:
@@ -1871,14 +1876,58 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             )
             self._dump_apps = False
 
+    def _get_ip_control_state_coordinator(self):
+        """Return the shared getTVStates coordinator created by sensor.py."""
+        return (
+            self.hass.data.get(DOMAIN, {})
+            .get(self._entry_id, {})
+            .get(DATA_IP_CONTROL_STATE_COORDINATOR)
+        )
+
+    def _get_ip_control_input_source(self) -> str | None:
+        """Return the latest physical input from the shared IP Control snapshot."""
+        # Do not consume a stale coordinator/cache after IP Control was disabled
+        # or unpaired in Reconfigure.
+        if self._get_ip_control_client() is None:
+            self._ip_input_source = None
+            return None
+
+        coordinator = self._get_ip_control_state_coordinator()
+        data = getattr(coordinator, "data", None)
+        if isinstance(data, dict) and not data.get("powered_off"):
+            tv_states = data.get("tv")
+            if isinstance(tv_states, dict):
+                value = tv_states.get("inputSource")
+                if isinstance(value, str) and value:
+                    self._ip_input_source = value
+
+        return self._ip_input_source
+
     def _get_source(self):
         """Return the current input source."""
         if self.state != MediaPlayerState.ON:
             self._source = None
             return self._source
 
+        # A running app is more specific than the physical TV input.
+        if self._running_app != DEFAULT_APP:
+            self._source = self._running_app
+            return self._source
+
+        # When IP Control is paired, prefer its local getTVStates.inputSource
+        # over SmartThings. Resolve HDMI1/HDMI2/... back to the configured
+        # display name (e.g. "PC" / "Chromecast") so media_player.source stays
+        # consistent with source_list and mini-media-player selectors.
+        if local_source := self._get_ip_control_input_source():
+            if resolved := self._resolve_source_by_id(local_source):
+                self._source = resolved[0]
+                return self._source
+            if self._source_list and local_source in self._source_list:
+                self._source = local_source
+                return self._source
+
         use_st: bool = self._st is not None and self._st.state == STStatus.STATE_ON
-        if self._running_app != DEFAULT_APP or not use_st:
+        if not use_st:
             self._source = self._running_app
             return self._source
 
@@ -3004,6 +3053,47 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         else:
             self.send_command("KEY_REWIND")
 
+    async def _async_ip_control_source(self, source_key: str) -> bool:
+        """Select an input source through local Samsung IP Control."""
+        input_source = source_key.removeprefix("IP_")
+        if not input_source:
+            self._log.error("Invalid IP Control source command: %s", source_key)
+            return False
+
+        client = self._get_ip_control_client()
+        if client is None:
+            self._log.error(
+                "IP Control is not paired or is disabled. Command not sent: %s",
+                source_key,
+            )
+            return False
+
+        try:
+            selected_source = await client.async_set_input_source(input_source)
+        except SamsungIPControlError as ex:
+            self._log.error("IP Control input source %s failed: %s", input_source, ex)
+            return False
+
+        # Keep media_player.source and the existing diagnostic input-source
+        # sensor in sync immediately. The next coordinator poll will confirm the
+        # physical state; no extra JSON-RPC request is needed here.
+        self._ip_input_source = selected_source
+        coordinator = self._get_ip_control_state_coordinator()
+        if coordinator is not None:
+            current_data = getattr(coordinator, "data", None)
+            updated_data = dict(current_data) if isinstance(current_data, dict) else {}
+            current_tv = updated_data.get("tv")
+            tv_states = dict(current_tv) if isinstance(current_tv, dict) else {}
+            tv_states["inputSource"] = selected_source
+            updated_data["tv"] = tv_states
+            updated_data["powered_off"] = False
+            set_updated_data = getattr(coordinator, "async_set_updated_data", None)
+            if callable(set_updated_data):
+                set_updated_data(updated_data)
+
+        self._log.debug("IP Control input source selected: %s", selected_source)
+        return True
+
     async def _async_send_keys(self, source_key):
         """Send key / chained keys."""
         prev_wait = True
@@ -3024,12 +3114,18 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
                     if not prev_wait:
                         await asyncio.sleep(KEYPRESS_DEFAULT_DELAY)
                     prev_wait = False
-                    if this_key.startswith("ST_"):
+                    if this_key.startswith("IP_"):
+                        if not await self._async_ip_control_source(this_key):
+                            return False
+                    elif this_key.startswith("ST_"):
                         await self._smartthings_keys(this_key)
                     else:
                         await self.async_send_command(this_key)
 
             return True
+
+        if source_key.startswith("IP_"):
+            return await self._async_ip_control_source(source_key)
 
         if source_key.startswith("ST_"):
             return await self._smartthings_keys(source_key)
