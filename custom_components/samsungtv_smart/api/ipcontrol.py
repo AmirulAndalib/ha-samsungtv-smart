@@ -103,6 +103,20 @@ ERROR_PARSE_STALE_TOKEN = -32700
 # accept them. Not a transport or pairing problem: retrying after switching
 # picture mode succeeds.
 ERROR_SERVER = -32002
+# Methods whose -32002 genuinely means "the current picture mode forbids this
+# write". Reads (notably getTVStates) return the same code for unrelated
+# reasons, so the picture-mode advice must not be attached to them.
+PICTURE_WRITE_METHODS = frozenset(
+    {
+        "backlightControl",
+        "brightnessControl",
+        "colorControl",
+        "colorToneControl",
+        "contrastControl",
+        "sharpnessControl",
+        "tintControl",
+    }
+)
 # JSON-RPC "Method not found". AMBIGUOUS on Frames: the SAME code is returned
 # both when a method genuinely doesn't exist on the model AND when it exists but
 # isn't available in the current TV state — notably the picture controls while
@@ -645,11 +659,20 @@ class SamsungIPControl:
                     f"token rejected (code {code}): {message} — re-pair required"
                 )
             if code == ERROR_SERVER:
+                # The picture-mode explanation only applies to the expert
+                # picture WRITES it was written for. getTVStates also returns
+                # -32002 occasionally, and telling someone to change picture
+                # mode to fix a state READ sends them nowhere.
+                if method in PICTURE_WRITE_METHODS:
+                    raise SamsungIPControlModeLockedError(
+                        f"{method} returned error {code}: {message} — the "
+                        "current picture mode likely blocks this control (e.g. "
+                        "Dynamic/HDR-dynamic); switch to Standard/Movie/"
+                        "Filmmaker and retry"
+                    )
                 raise SamsungIPControlModeLockedError(
-                    f"TV returned error {code}: {message} — the current "
-                    "picture mode likely blocks this control (e.g. "
-                    "Dynamic/HDR-dynamic); switch to Standard/Movie/"
-                    "Filmmaker and retry"
+                    f"{method} returned error {code}: {message} — the TV "
+                    "refused it in its current state; usually transient"
                 )
             if code == ERROR_METHOD_NOT_FOUND:
                 raise SamsungIPControlUnsupportedError(
