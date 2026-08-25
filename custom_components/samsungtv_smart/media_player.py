@@ -702,6 +702,9 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         # Current physical input reported by the shared getTVStates coordinator.
         # Also updated optimistically after a successful local source change.
         self._ip_input_source: str | None = None
+        # Last SmartThings input that matched nothing in the source list,
+        # so the warning above is logged once per change, not per poll.
+        self._last_unmapped_source: str | None = None
         self._ip_art_mode: bool | None = None
         # Consecutive transport-failure count; the cache is cleared once it
         # reaches IP_ART_MODE_MAX_FAILURES so a TV that stops answering on
@@ -1943,6 +1946,21 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             if value == cloud_key:
                 found_source = attr
                 break
+        else:
+            # SmartThings knows which input the TV is on, but no entry in the
+            # source list maps to it, so the reported source silently stays at
+            # the generic running-app value and looks like "it never updates"
+            # (#230). Happens when the source list is the default (KEY_* values,
+            # no ST_* keys) or when discovery returned only some of the inputs.
+            if cloud_key and cloud_key != self._last_unmapped_source:
+                self._log.debug(
+                    "SmartThings reports input %s, but no source list entry "
+                    "maps to it (list: %s) — reported source stays %s",
+                    cloud_key,
+                    self._source_list,
+                    found_source,
+                )
+            self._last_unmapped_source = cloud_key
 
         self._source = found_source
         return self._source
