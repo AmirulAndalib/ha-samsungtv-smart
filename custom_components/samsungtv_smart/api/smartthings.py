@@ -144,6 +144,12 @@ class SmartThingsTV:
 
         self._is_forced_val = False
         self._forced_count = 0
+        # True when the last poll read the current input from the device status.
+        # Some TVs (e.g. 2022 Frame) report mediaInputSource.inputSource as null
+        # and supportedInputSources as [], so the input is only available from
+        # the samsungvd.mediaInputSource REST status and has to be re-read on
+        # every poll — otherwise the reported source stays frozen (#230).
+        self._source_from_status = False
 
     def set_verified_picture_mode_capability(self, capability: str | None) -> None:
         """Seed the verified setPictureMode capability (from persisted data).
@@ -410,9 +416,20 @@ class SmartThingsTV:
                         if sources_map_raw:
                             self._apply_source_name_map(sources_map_raw)
 
-        # Fallback: if pysmartthings didn't provide sources, fetch via REST
-        if not self._source_list and self._state == STStatus.STATE_ON:
-            self._log.debug("Samsung TV: source_list empty, trying REST fallback")
+        # Fallback: fetch via REST when pysmartthings gave us no source list,
+        # or when it gave us no current input this poll. The second case is not
+        # a one-off: on TVs whose mediaInputSource attributes are always null,
+        # this REST read is the ONLY place the current input comes from, so it
+        # has to run on every poll or the source never changes again (#230).
+        if self._state == STStatus.STATE_ON and (
+            not self._source_list or not self._source_from_status
+        ):
+            self._log.debug(
+                "Samsung TV: reading input source via REST (list empty: %s, "
+                "input in status: %s)",
+                not self._source_list,
+                self._source_from_status,
+            )
             await self._fetch_input_source_map()
 
         if self._source_list:
@@ -790,17 +807,19 @@ class SmartThingsTV:
             if "audioMute" in main_comp and "mute" in main_comp["audioMute"]:
                 self._muted = main_comp["audioMute"]["mute"].value == "muted"
 
-            # Update source — try standard capability first
-            if (
-                "mediaInputSource" in main_comp
-                and "inputSource" in main_comp["mediaInputSource"]
-            ):
-                input_val = main_comp["mediaInputSource"]["inputSource"].value
-                if input_val:
-                    self._source = input_val
-            # Note: if inputSource is null from standard capability,
-            # _update_source_list / _fetch_input_source_map will read it
-            # from samsungvd.mediaInputSource REST response instead.
+            # Update source — standard capability first, then the Samsung one.
+            self._source_from_status = False
+            for _src_cap in ("mediaInputSource", "samsungvd.mediaInputSource"):
+                if _src_cap in main_comp and "inputSource" in main_comp[_src_cap]:
+                    input_val = main_comp[_src_cap]["inputSource"].value
+                    if input_val:
+                        self._source = input_val
+                        self._source_from_status = True
+                        break
+            # If neither capability carried a value, _update_source_list falls
+            # back to reading samsungvd.mediaInputSource over REST — on every
+            # poll, not only the first one, or the source would stay frozen at
+            # whatever input the TV was on when the list was first built (#230).
 
             # Update channel info if enabled
             if use_channel_info and self._state == STStatus.STATE_ON:
