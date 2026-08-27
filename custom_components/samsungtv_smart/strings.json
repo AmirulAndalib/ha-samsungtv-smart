@@ -208,7 +208,8 @@
           "use_mute_check": "Use Mute State for Power Detection",
           "dump_apps": "Debug: Dump Applications",
           "toggle_art_mode": "Toggle Art Mode on Power",
-          "st_poll_on_interval": "SmartThings poll interval when on (seconds)"
+          "st_poll_on_interval": "SmartThings poll interval when on (seconds)",
+          "ip_control_poll_interval": "IP Control poll interval (seconds)"
         }
       },
       "save_exit": {

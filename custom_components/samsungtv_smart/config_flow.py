@@ -82,6 +82,7 @@ from .const import (
     CONF_IP_CONTROL_ART_MODE,
     CONF_IP_CONTROL_FW_VERSION,
     CONF_IP_CONTROL_MODEL_ID,
+    CONF_IP_CONTROL_POLL_INTERVAL,
     CONF_IP_CONTROL_PORT,
     CONF_IP_CONTROL_TOKEN,
     CONF_LOGO_OPTION,
@@ -105,14 +106,17 @@ from .const import (
     CONF_WOL_REPEAT,
     CONF_WS_NAME,
     DEFAULT_CONTENT_LIST_INTERVAL,
+    DEFAULT_IP_CONTROL_POLL_INTERVAL,
     DEFAULT_PORT,
     DEFAULT_ST_POLL_ON_INTERVAL,
     DOMAIN,
     IP_CONTROL_PORTS,
     MAX_CONTENT_LIST_INTERVAL,
+    MAX_IP_CONTROL_POLL_INTERVAL,
     MAX_ST_POLL_ON_INTERVAL,
     MAX_WOL_REPEAT,
     MIN_CONTENT_LIST_INTERVAL,
+    MIN_IP_CONTROL_POLL_INTERVAL,
     MIN_ST_POLL_ON_INTERVAL,
     RESULT_ST_DEVICE_NOT_FOUND,
     RESULT_ST_DEVICE_USED,
@@ -163,6 +167,7 @@ ADVANCED_OPTIONS = [
     CONF_DUMP_APPS,
     CONF_EXT_POWER_ENTITY,
     CONF_PING_PORT,
+    CONF_IP_CONTROL_POLL_INTERVAL,
     CONF_ST_POLL_ON_INTERVAL,
     CONF_WOL_REPEAT,
     CONF_TOGGLE_ART_MODE,
@@ -1759,6 +1764,19 @@ class OptionsFlowHandler(OptionsFlow):
                     vol.Clamp(
                         min=MIN_ST_POLL_ON_INTERVAL,
                         max=MAX_ST_POLL_ON_INTERVAL,
+                    ),
+                ),
+                vol.Required(
+                    CONF_IP_CONTROL_POLL_INTERVAL,
+                    default=options.get(
+                        CONF_IP_CONTROL_POLL_INTERVAL,
+                        DEFAULT_IP_CONTROL_POLL_INTERVAL,
+                    ),
+                ): vol.All(
+                    vol.Coerce(int),
+                    vol.Clamp(
+                        min=MIN_IP_CONTROL_POLL_INTERVAL,
+                        max=MAX_IP_CONTROL_POLL_INTERVAL,
                     ),
                 ),
             }

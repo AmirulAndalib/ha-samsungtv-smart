@@ -105,7 +105,7 @@ def test_channel_is_read_while_the_snapshot_says_tuner():
 def test_stale_channel_is_dropped_once_the_input_left_the_tuner():
     """A channel left over from the previous poll is not reported on HDMI.
 
-    The snapshot is only refreshed every IP_CONTROL_STATE_SCAN_INTERVAL, so
+    The snapshot is only refreshed at the IP Control poll cadence, so
     right after switching to HDMI it still carries the tuner channel.
     """
     device = _device()

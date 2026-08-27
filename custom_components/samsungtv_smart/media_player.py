@@ -1917,7 +1917,7 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         if not isinstance(data, dict) or data.get("powered_off"):
             return None
 
-        # The snapshot is refreshed every IP_CONTROL_STATE_SCAN_INTERVAL, so
+        # The snapshot is refreshed at the configured IP Control poll cadence, so
         # after switching the TV away from its tuner the previous poll's channel
         # is still in `data` until the next one. Cross-check the input recorded
         # in the same snapshot, or media_channel would keep reporting a channel

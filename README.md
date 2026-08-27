@@ -317,6 +317,7 @@ After initial setup, click **Configure** on the integration card to access these
 | **Sync turn on/off** | Optional entity to mirror TV power state |
 | **External power entity** | Use an external sensor to determine power state |
 | **Toggle Art Mode** | Toggle Art Mode when turning on a Frame TV that is already in Art Mode |
+| **IP Control poll interval** | How often the local IP Control state is read (5–600 s, default 10). This snapshot carries the input source, picture/sound modes and — on the tuner — the channel number, so it decides how fast those follow a change made with the remote. Local LAN calls, no cloud quota: lower is fine on modern panels, raise it if an older TV is slow to answer |
 | **Ping port** | Port used to detect TV presence |
 | **WS name** | Name shown on the TV when pairing (default: `[Home Assistant]`) |
 
