@@ -99,8 +99,13 @@ async def test_tuner_channel_is_added_for_non_frame_tv(hass):
     client.async_get_channel.assert_awaited_once_with()
 
 
-async def test_frame_tv_never_queries_channel_control(hass):
-    """A known Frame TV never receives directChannelControl."""
+async def test_frame_tv_on_tuner_queries_channel_control(hass):
+    """A Frame TV has a tuner too, so it is queried like any other TV.
+
+    Panels that do not implement directChannelControl answer -32601 and are
+    then never asked again, which is what
+    test_unsupported_channel_control_is_probed_only_once covers.
+    """
     entry = _entry(hass, is_frame=True)
     coordinator = IPControlStateCoordinator(hass, entry, HOST)
     client = _client(source="TV")
@@ -108,10 +113,10 @@ async def test_frame_tv_never_queries_channel_control(hass):
     data = await _update(coordinator, client)
 
     assert data["tv"] == {"inputSource": "TV"}
-    assert data["channel"] == {}
+    assert data["channel"]["channelNum"] == "5"
     assert data["powered_off"] is False
-    assert coordinator._channel_control_supported is None
-    client.async_get_channel.assert_not_awaited()
+    assert coordinator._channel_control_supported is True
+    client.async_get_channel.assert_awaited_once_with()
 
 
 async def test_hdmi_never_queries_channel_control(hass):
@@ -187,5 +192,43 @@ async def test_transient_channel_error_does_not_disable_capability(hass):
     second = await _update(coordinator, client)
 
     assert second["channel"]["channelNum"] == "7"
+    assert coordinator._channel_control_supported is True
+    assert client.async_get_channel.await_count == 2
+
+
+async def test_unsupported_in_art_mode_is_not_latched(hass):
+    """A -32601 while art is displayed must not disable the capability.
+
+    directChannelControl is dispatched from a map that is not active in
+    ambient mode, so a Frame that does support it can answer "method not
+    found" while art is on the panel.
+    """
+    entry = _entry(hass, is_frame=True)
+    coordinator = IPControlStateCoordinator(hass, entry, HOST)
+    client = _client(source="TV")
+    client.async_get_tv_states.return_value = {
+        "inputSource": "TV",
+        "pictureMode": "Ambient",
+    }
+    client.async_get_channel.side_effect = SamsungIPControlUnsupportedError(
+        "Method not found"
+    )
+
+    first = await _update(coordinator, client)
+
+    assert first["channel"] == {}
+    assert coordinator._channel_control_supported is None
+
+    # Leaving art mode must let the channel work again without a restart.
+    client.async_get_tv_states.return_value = {
+        "inputSource": "TV",
+        "pictureMode": "Standard",
+    }
+    client.async_get_channel.side_effect = None
+    client.async_get_channel.return_value = {"channelNum": "1001"}
+
+    second = await _update(coordinator, client)
+
+    assert second["channel"]["channelNum"] == "1001"
     assert coordinator._channel_control_supported is True
     assert client.async_get_channel.await_count == 2
