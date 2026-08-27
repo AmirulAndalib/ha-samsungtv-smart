@@ -2715,10 +2715,17 @@ class IPControlStateCoordinator(DataUpdateCoordinator):
             )
             # pictureMode is "Ambient" exactly while art is on the panel — the
             # free panel signal async_get_art_mode cross-checks against, with no
-            # extra request here.
+            # extra request here. A Frame in art mode still reports inputSource
+            # "TV" (measured), so without this the tuner would look active and
+            # be polled for a channel number that means nothing while art is
+            # displayed.
             art_mode_on = tv_states.get("pictureMode") == "Ambient"
 
-            if tuner_active and self._channel_control_supported is not False:
+            if (
+                tuner_active
+                and not art_mode_on
+                and self._channel_control_supported is not False
+            ):
                 try:
                     channel_states = await client.async_get_channel()
                     self._channel_control_supported = True
