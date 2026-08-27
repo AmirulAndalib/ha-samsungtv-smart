@@ -1906,6 +1906,28 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
 
         return self._ip_input_source
 
+    def _get_ip_control_channel(self) -> str | None:
+        """Return the latest tuner channel from the shared IP Control snapshot."""
+        if self._get_ip_control_client() is None:
+            return None
+
+        coordinator = self._get_ip_control_state_coordinator()
+        data = getattr(coordinator, "data", None)
+        if not isinstance(data, dict) or data.get("powered_off"):
+            return None
+
+        channel_states = data.get("channel")
+        if not isinstance(channel_states, dict):
+            return None
+
+        value = channel_states.get("channelNum")
+        if isinstance(value, (str, int)):
+            channel = str(value).strip()
+            if channel:
+                return channel
+
+        return None
+
     def _get_source(self):
         """Return the current input source."""
         if self.state != MediaPlayerState.ON:
@@ -2680,10 +2702,16 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
     @property
     def media_channel(self):
         """Channel currently playing."""
-        if self._state == MediaPlayerState.ON:
-            if self._st:
-                if self._st.source in ["digitalTv", "TV"] and self._st.channel != "":
-                    return self._st.channel
+        if self._state != MediaPlayerState.ON:
+            return None
+
+        if local_channel := self._get_ip_control_channel():
+            return local_channel
+
+        if self._st:
+            if self._st.source in ["digitalTv", "TV"] and self._st.channel != "":
+                return self._st.channel
+
         return None
 
     @property
