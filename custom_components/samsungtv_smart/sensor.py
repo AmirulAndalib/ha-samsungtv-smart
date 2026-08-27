@@ -56,6 +56,7 @@ from .const import (
     CONF_ART_IDENTIFY_ENABLE,
     CONF_DEVICE_ID,
     CONF_ENABLE_IP_CONTROL,
+    CONF_IP_CONTROL_POLL_INTERVAL,
     CONF_IP_CONTROL_TOKEN,
     CONF_IS_FRAME_TV,
     CONF_OAUTH_TOKEN,
@@ -65,6 +66,7 @@ from .const import (
     DATA_ART_API,
     DATA_CFG,
     DATA_IP_CONTROL_STATE_COORDINATOR,
+    DEFAULT_IP_CONTROL_POLL_INTERVAL,
     DEFAULT_PORT,
     DEFAULT_ST_POLL_ON_INTERVAL,
     DOMAIN,
@@ -82,6 +84,13 @@ def _ip_control_active(entry: ConfigEntry) -> bool:
     """True when IP Control is paired AND enabled in the options."""
     return bool(entry.data.get(CONF_IP_CONTROL_TOKEN)) and entry.options.get(
         CONF_ENABLE_IP_CONTROL, True
+    )
+
+
+def _ip_control_poll_interval(entry: ConfigEntry) -> int:
+    """Configured IP Control poll cadence (seconds) for the state sensors."""
+    return entry.options.get(
+        CONF_IP_CONTROL_POLL_INTERVAL, DEFAULT_IP_CONTROL_POLL_INTERVAL
     )
 
 
@@ -167,10 +176,6 @@ def _st_child_gate(entity) -> bool:
     entity._st_last_poll = now
     return True
 
-
-# Update interval for the read-only IP Control state sensors. Picture/sound
-# settings change slowly, so a relaxed cadence keeps JSON-RPC traffic light.
-IP_CONTROL_STATE_SCAN_INTERVAL = timedelta(seconds=30)
 
 # How long to wait before re-fetching the thumbnail of an Art Store (SAM-*)
 # artwork the TV has not cached locally yet. The TV materializes the thumbnail
@@ -2648,7 +2653,7 @@ class IPControlStateCoordinator(DataUpdateCoordinator):
             hass,
             self._log,
             name=f"IP Control state {entry.title}",
-            update_interval=IP_CONTROL_STATE_SCAN_INTERVAL,
+            update_interval=timedelta(seconds=_ip_control_poll_interval(entry)),
         )
         self._entry = entry
         self._host = host

@@ -68,6 +68,20 @@ CONF_ST_POLL_ON_INTERVAL = "st_poll_on_interval"
 DEFAULT_ST_POLL_ON_INTERVAL = 30
 MIN_ST_POLL_ON_INTERVAL = 5
 MAX_ST_POLL_ON_INTERVAL = 600
+# IP Control (local JSON-RPC) poll cadence (seconds) for the read-only state
+# sensors: speaker, volume, mute, picture size/mode, sound mode, input source
+# and — when the tuner is the active input — the local channel number. This is
+# a LAN call to the TV with no cloud quota behind it, which is why it is a
+# separate setting from CONF_ST_POLL_ON_INTERVAL rather than sharing it: the
+# reason to slow SmartThings down (cloud rate limits) does not apply here.
+# The floor is deliberately low but not zero — old panels (e.g. the 2018 set of
+# issue #206) are slow to answer, and below ~5 s the requests start to overlap
+# the responses rather than making anything more responsive.
+CONF_IP_CONTROL_POLL_INTERVAL = "ip_control_poll_interval"
+DEFAULT_IP_CONTROL_POLL_INTERVAL = 10
+MIN_IP_CONTROL_POLL_INTERVAL = 5
+MAX_IP_CONTROL_POLL_INTERVAL = 600
+
 # Fixed SmartThings poll cadence (seconds) while the TV is OFF. A short
 # keepalive so a power-on is still picked up from the cloud as a backup to
 # the local WebSocket, without hammering the API during standby.
