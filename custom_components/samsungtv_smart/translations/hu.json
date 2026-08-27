@@ -162,7 +162,9 @@
           "use_mute_check": "Hangerőnémítás állapotának használata hamis bekapcsolás észleléséhez",
           "dump_apps": "Az alkalmazások listájának naplófájlba való kiírása induláskor (amennyiben lehetséges)",
           "toggle_art_mode": "Art módra váltó bekapcsológomb (kizárólag Frame TV esetén)",
-          "st_poll_on_interval": "SmartThings lekérdezési időköz bekapcsolt TV-nél (másodperc)"
+          "st_poll_on_interval": "SmartThings időköz bekapcsolt TV-nél (mp)",
+          "content_list_interval": "Műalkotáslista frissítési időköze (mp)",
+          "ip_control_poll_interval": "IP Control időköz (mp)"
         }
       },
       "save_exit": {

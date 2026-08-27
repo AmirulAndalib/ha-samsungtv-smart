@@ -162,7 +162,9 @@
           "use_mute_check": "Usar estado de silencio para detectar encendido",
           "dump_apps": "Depuración: exportar lista de aplicaciones",
           "toggle_art_mode": "Botón de encendido alterna el modo Arte",
-          "st_poll_on_interval": "Intervalo de sondeo de SmartThings con la TV encendida (segundos)"
+          "st_poll_on_interval": "Intervalo de SmartThings con TV encendida (s)",
+          "content_list_interval": "Intervalo de actualización de la lista de obras (s)",
+          "ip_control_poll_interval": "Intervalo de IP Control (s)"
         }
       },
       "save_exit": {
