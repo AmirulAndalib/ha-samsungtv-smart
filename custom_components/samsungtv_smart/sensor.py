@@ -2701,9 +2701,10 @@ class IPControlStateCoordinator(DataUpdateCoordinator):
 
             # getTVStates remains the primary shared snapshot. When the tuner is
             # the active input, also query optional local channel metadata.
-            # Frame TVs have a tuner too, so they are not excluded: a panel that
-            # does not implement directChannelControl answers -32601 and is then
-            # never asked again for the life of the coordinator.
+            # Frame TVs have a tuner too and answer the getter (measured on a
+            # QN55LS03FAFXZA), so they are not excluded; a panel that does not
+            # implement directChannelControl answers -32601 and is then never
+            # asked again for the life of the coordinator.
             tv_states = await client.async_get_tv_states()
 
             channel_states: dict[str, Any] = {}
@@ -2712,16 +2713,32 @@ class IPControlStateCoordinator(DataUpdateCoordinator):
                 isinstance(input_source, str)
                 and input_source.casefold() in TUNER_INPUT_SOURCES
             )
+            # pictureMode is "Ambient" exactly while art is on the panel — the
+            # free panel signal async_get_art_mode cross-checks against, with no
+            # extra request here.
+            art_mode_on = tv_states.get("pictureMode") == "Ambient"
 
             if tuner_active and self._channel_control_supported is not False:
                 try:
                     channel_states = await client.async_get_channel()
                     self._channel_control_supported = True
                 except SamsungIPControlUnsupportedError:
-                    self._channel_control_supported = False
-                    self._log.debug(
-                        "IP Control channel state is not supported on this TV"
-                    )
+                    if art_mode_on:
+                        # The decompiled server dispatches directChannelControl
+                        # from a map that is not active in ambient/art mode, so
+                        # a TV that does support it can still answer "method not
+                        # found" while art is displayed. Latching on that would
+                        # disable the channel for the life of the coordinator
+                        # over a temporary display state, so retry later instead.
+                        self._log.debug(
+                            "IP Control channel state unavailable while art mode "
+                            "is on — not treating it as unsupported"
+                        )
+                    else:
+                        self._channel_control_supported = False
+                        self._log.debug(
+                            "IP Control channel state is not supported on this TV"
+                        )
                 except SamsungIPControlAuthError:
                     raise
                 except SamsungIPControlError as ex:

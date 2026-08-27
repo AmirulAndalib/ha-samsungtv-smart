@@ -194,3 +194,41 @@ async def test_transient_channel_error_does_not_disable_capability(hass):
     assert second["channel"]["channelNum"] == "7"
     assert coordinator._channel_control_supported is True
     assert client.async_get_channel.await_count == 2
+
+
+async def test_unsupported_in_art_mode_is_not_latched(hass):
+    """A -32601 while art is displayed must not disable the capability.
+
+    directChannelControl is dispatched from a map that is not active in
+    ambient mode, so a Frame that does support it can answer "method not
+    found" while art is on the panel.
+    """
+    entry = _entry(hass, is_frame=True)
+    coordinator = IPControlStateCoordinator(hass, entry, HOST)
+    client = _client(source="TV")
+    client.async_get_tv_states.return_value = {
+        "inputSource": "TV",
+        "pictureMode": "Ambient",
+    }
+    client.async_get_channel.side_effect = SamsungIPControlUnsupportedError(
+        "Method not found"
+    )
+
+    first = await _update(coordinator, client)
+
+    assert first["channel"] == {}
+    assert coordinator._channel_control_supported is None
+
+    # Leaving art mode must let the channel work again without a restart.
+    client.async_get_tv_states.return_value = {
+        "inputSource": "TV",
+        "pictureMode": "Standard",
+    }
+    client.async_get_channel.side_effect = None
+    client.async_get_channel.return_value = {"channelNum": "1001"}
+
+    second = await _update(coordinator, client)
+
+    assert second["channel"]["channelNum"] == "1001"
+    assert coordinator._channel_control_supported is True
+    assert client.async_get_channel.await_count == 2
