@@ -178,6 +178,7 @@ from .const import (
     SIGNAL_CONFIG_ENTITY,
     ST_POLL_OFF_INTERVAL,
     STD_APP_LIST,
+    TUNER_INPUT_SOURCES,
     WS_PREFIX,
     AppLaunchMethod,
     AppLoadMethod,
@@ -1915,6 +1916,21 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         data = getattr(coordinator, "data", None)
         if not isinstance(data, dict) or data.get("powered_off"):
             return None
+
+        # The snapshot is refreshed every IP_CONTROL_STATE_SCAN_INTERVAL, so
+        # after switching the TV away from its tuner the previous poll's channel
+        # is still in `data` until the next one. Cross-check the input recorded
+        # in the same snapshot, or media_channel would keep reporting a channel
+        # number — and media_content_type would keep saying CHANNEL — for up to
+        # one poll cycle while the TV is already on HDMI.
+        tv_states = data.get("tv")
+        if isinstance(tv_states, dict):
+            input_source = tv_states.get("inputSource")
+            if (
+                isinstance(input_source, str)
+                and input_source.casefold() not in TUNER_INPUT_SOURCES
+            ):
+                return None
 
         channel_states = data.get("channel")
         if not isinstance(channel_states, dict):

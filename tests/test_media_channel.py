@@ -74,3 +74,48 @@ def test_local_channel_sets_channel_media_type():
     ):
         assert device.media_channel == "7"
         assert device.media_content_type == MediaType.CHANNEL
+
+
+def _snapshot(input_source):
+    """Return a coordinator holding one IP Control snapshot."""
+    return SimpleNamespace(
+        data={
+            "tv": {"inputSource": input_source},
+            "channel": {"atvDtv": "dtv", "airCable": "air", "channelNum": "5"},
+            "powered_off": False,
+        }
+    )
+
+
+def test_channel_is_read_while_the_snapshot_says_tuner():
+    """The channel of the current snapshot is exposed on a tuner input."""
+    device = _device()
+
+    with (
+        patch.object(SamsungTVDevice, "_get_ip_control_client", return_value=object()),
+        patch.object(
+            SamsungTVDevice,
+            "_get_ip_control_state_coordinator",
+            return_value=_snapshot("TV"),
+        ),
+    ):
+        assert device._get_ip_control_channel() == "5"
+
+
+def test_stale_channel_is_dropped_once_the_input_left_the_tuner():
+    """A channel left over from the previous poll is not reported on HDMI.
+
+    The snapshot is only refreshed every IP_CONTROL_STATE_SCAN_INTERVAL, so
+    right after switching to HDMI it still carries the tuner channel.
+    """
+    device = _device()
+
+    with (
+        patch.object(SamsungTVDevice, "_get_ip_control_client", return_value=object()),
+        patch.object(
+            SamsungTVDevice,
+            "_get_ip_control_state_coordinator",
+            return_value=_snapshot("HDMI1"),
+        ),
+    ):
+        assert device._get_ip_control_channel() is None

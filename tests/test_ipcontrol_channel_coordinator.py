@@ -99,8 +99,13 @@ async def test_tuner_channel_is_added_for_non_frame_tv(hass):
     client.async_get_channel.assert_awaited_once_with()
 
 
-async def test_frame_tv_never_queries_channel_control(hass):
-    """A known Frame TV never receives directChannelControl."""
+async def test_frame_tv_on_tuner_queries_channel_control(hass):
+    """A Frame TV has a tuner too, so it is queried like any other TV.
+
+    Panels that do not implement directChannelControl answer -32601 and are
+    then never asked again, which is what
+    test_unsupported_channel_control_is_probed_only_once covers.
+    """
     entry = _entry(hass, is_frame=True)
     coordinator = IPControlStateCoordinator(hass, entry, HOST)
     client = _client(source="TV")
@@ -108,10 +113,10 @@ async def test_frame_tv_never_queries_channel_control(hass):
     data = await _update(coordinator, client)
 
     assert data["tv"] == {"inputSource": "TV"}
-    assert data["channel"] == {}
+    assert data["channel"]["channelNum"] == "5"
     assert data["powered_off"] is False
-    assert coordinator._channel_control_supported is None
-    client.async_get_channel.assert_not_awaited()
+    assert coordinator._channel_control_supported is True
+    client.async_get_channel.assert_awaited_once_with()
 
 
 async def test_hdmi_never_queries_channel_control(hass):

@@ -69,6 +69,7 @@ from .const import (
     DEFAULT_ST_POLL_ON_INTERVAL,
     DOMAIN,
     ST_POLL_OFF_INTERVAL,
+    TUNER_INPUT_SOURCES,
     WS_PREFIX,
     ip_control_port,
 )
@@ -2698,21 +2699,21 @@ class IPControlStateCoordinator(DataUpdateCoordinator):
                 )
                 return {"tv": {}, "powered_off": True}
 
-            # getTVStates remains the primary shared snapshot. On non-Frame TVs
-            # with the tuner active, also query optional local channel metadata.
+            # getTVStates remains the primary shared snapshot. When the tuner is
+            # the active input, also query optional local channel metadata.
+            # Frame TVs have a tuner too, so they are not excluded: a panel that
+            # does not implement directChannelControl answers -32601 and is then
+            # never asked again for the life of the coordinator.
             tv_states = await client.async_get_tv_states()
 
             channel_states: dict[str, Any] = {}
             input_source = tv_states.get("inputSource")
-            tuner_active = isinstance(
-                input_source, str
-            ) and input_source.casefold() in {"tv", "digitaltv", "dtv"}
+            tuner_active = (
+                isinstance(input_source, str)
+                and input_source.casefold() in TUNER_INPUT_SOURCES
+            )
 
-            if (
-                not self._entry.data.get(CONF_IS_FRAME_TV, False)
-                and tuner_active
-                and self._channel_control_supported is not False
-            ):
+            if tuner_active and self._channel_control_supported is not False:
                 try:
                     channel_states = await client.async_get_channel()
                     self._channel_control_supported = True

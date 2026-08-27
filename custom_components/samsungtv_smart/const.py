@@ -223,6 +223,10 @@ CONF_SCAN_APP_HTTP = "scan_app_http"
 
 DEFAULT_APP = "TV/HDMI"
 DEFAULT_PORT = 8001
+# Input source ids (casefolded) that mean "the built-in tuner", i.e. the only
+# inputs on which a tuner channel number is meaningful. Samsung reports the
+# tuner under several spellings depending on model and API.
+TUNER_INPUT_SOURCES = frozenset({"tv", "digitaltv", "dtv"})
 DEFAULT_SOURCE_LIST = {"TV": "KEY_TV", "HDMI": "KEY_HDMI"}
 DEFAULT_TIMEOUT = 6
 
