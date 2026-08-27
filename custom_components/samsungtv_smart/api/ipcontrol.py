@@ -541,6 +541,15 @@ class SamsungIPControl:
         """
         return await self._async_request("getTVStates")
 
+    async def async_get_channel(self) -> dict[str, Any]:
+        """Return the current tuner channel state, when supported.
+
+        Some tuner-equipped Samsung TVs expose ``atvDtv``, ``airCable`` and
+        ``channelNum`` through ``directChannelControl``. Models without this
+        capability may return ``-32601``.
+        """
+        return await self._async_request("directChannelControl")
+
     async def async_get_video_states(self) -> dict[str, Any]:
         """Return the TV's picture-level snapshot (read-only).
 

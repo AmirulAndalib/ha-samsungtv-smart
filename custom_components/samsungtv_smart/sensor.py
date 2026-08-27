@@ -48,6 +48,7 @@ from .api.ipcontrol import (
     SamsungIPControlAuthError,
     SamsungIPControlError,
     SamsungIPControlTransportError,
+    SamsungIPControlUnsupportedError,
 )
 from .const import (
     ART_IDENTIFY_DEBOUNCE,
@@ -2624,9 +2625,11 @@ class SmartThingsPowerConsumptionSensor(CoordinatorEntity, SensorEntity):
 class IPControlStateCoordinator(DataUpdateCoordinator):
     """Polls getTVStates over IP Control for the read-only state sensors.
 
-    A single coordinator feeds all the getTVStates sensors, so each cycle issues
-    one JSON-RPC call (plus a cheap power-state check) regardless of how many
-    sensors are enabled. The TV is skipped while it is powered off, both to
+    A single coordinator feeds all the getTVStates sensors, so each cycle shares
+    one getTVStates request (plus a cheap power-state check) regardless of how
+    many sensors are enabled. When a non-Frame TV is on a tuner input, one
+    optional directChannelControl request may also fetch local channel metadata.
+    The TV is skipped while it is powered off, both to
     avoid pointless traffic and because the state getters return stale values in
     standby. (The getVideoStates picture fields moved to settable number
     sliders with their own coordinator — see number.py.)
@@ -2650,6 +2653,7 @@ class IPControlStateCoordinator(DataUpdateCoordinator):
         self._host = host
         self._ip_control: SamsungIPControl | None = None
         self._ip_control_token: str | None = None
+        self._channel_control_supported: bool | None = None
 
     def _device_title(self) -> str:
         entry = self.hass.config_entries.async_get_entry(self._entry.entry_id)
@@ -2694,10 +2698,36 @@ class IPControlStateCoordinator(DataUpdateCoordinator):
                 )
                 return {"tv": {}, "powered_off": True}
 
-            # Only getTVStates is consumed now (the getVideoStates fields moved
-            # to settable `number` sliders that read/write directly), so this
-            # coordinator issues a single JSON-RPC call per cycle.
+            # getTVStates remains the primary shared snapshot. On non-Frame TVs
+            # with the tuner active, also query optional local channel metadata.
             tv_states = await client.async_get_tv_states()
+
+            channel_states: dict[str, Any] = {}
+            input_source = tv_states.get("inputSource")
+            tuner_active = isinstance(
+                input_source, str
+            ) and input_source.casefold() in {"tv", "digitaltv", "dtv"}
+
+            if (
+                not self._entry.data.get(CONF_IS_FRAME_TV, False)
+                and tuner_active
+                and self._channel_control_supported is not False
+            ):
+                try:
+                    channel_states = await client.async_get_channel()
+                    self._channel_control_supported = True
+                except SamsungIPControlUnsupportedError:
+                    self._channel_control_supported = False
+                    self._log.debug(
+                        "IP Control channel state is not supported on this TV"
+                    )
+                except SamsungIPControlAuthError:
+                    raise
+                except SamsungIPControlError as ex:
+                    # Channel metadata is optional. A transient failure must not
+                    # invalidate the normal getTVStates snapshot.
+                    self._log.debug("IP Control channel state read failed: %s", ex)
+
         except SamsungIPControlAuthError as ex:
             notify_token_problem(
                 self.hass,
@@ -2724,7 +2754,11 @@ class IPControlStateCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(f"IP Control state read failed: {ex}") from ex
 
         clear_token_problem(self.hass, self._entry.entry_id, METHOD_IP_CONTROL)
-        return {"tv": tv_states, "powered_off": False}
+        return {
+            "tv": tv_states,
+            "channel": channel_states,
+            "powered_off": False,
+        }
 
 
 class IPControlStateSensor(CoordinatorEntity, SensorEntity):
