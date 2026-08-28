@@ -46,6 +46,7 @@ def _device(*, external=True, muted=False, volume=0.20):
     device._setvolumebyst = False
 
     device._ip_absolute_volume_supported = None
+    device._ip_control_ambient_mode_active = MagicMock(return_value=False)
 
     device._log = MagicMock()
     device._upnp = AsyncMock()
@@ -245,3 +246,71 @@ async def test_mute_does_nothing_when_state_already_matches():
     await device.async_mute_volume(True)
 
     device.async_send_command.assert_not_awaited()
+
+
+async def test_unsupported_volume_probe_in_ambient_mode_is_not_latched():
+    """A -32601 in Ambient mode must not permanently disable volume control."""
+    device = _device(external=True)
+
+    client = AsyncMock()
+    client.async_get_volume.side_effect = [
+        SamsungIPControlUnsupportedError("Method not found"),
+        30,
+    ]
+
+    device._get_ip_control_client = MagicMock(
+        return_value=client
+    )
+    device._ip_control_ambient_mode_active.return_value = True
+
+    device._upnp.async_get_volume.return_value = 20
+    device._upnp.async_get_mute.return_value = False
+
+    await device._update_volume_info()
+
+    assert device._ip_absolute_volume_supported is None
+    assert device._attr_volume_level == 0.20
+    assert client.async_get_volume.await_count == 1
+
+    # After leaving Ambient mode the method must be probed again and can
+    # successfully establish support without reloading the integration.
+    device._ip_control_ambient_mode_active.return_value = False
+
+    await device._update_volume_info()
+
+    assert device._ip_absolute_volume_supported is True
+    assert device._attr_volume_level == 0.30
+    assert client.async_get_volume.await_count == 2
+
+
+async def test_unsupported_volume_set_in_ambient_mode_is_not_latched():
+    """A setter -32601 in Ambient mode must remain retryable."""
+    device = _device(external=True, volume=0.20)
+
+    client = AsyncMock()
+    client.async_set_volume.side_effect = [
+        SamsungIPControlUnsupportedError("Method not found"),
+        30,
+    ]
+
+    device._get_ip_control_client = MagicMock(
+        return_value=client
+    )
+    device._ip_control_ambient_mode_active.return_value = True
+
+    await device.async_set_volume_level(0.30)
+
+    assert device._ip_absolute_volume_supported is None
+    assert device._attr_volume_level == 0.20
+    assert client.async_set_volume.await_count == 1
+    device._upnp.async_set_volume.assert_not_awaited()
+
+    # Leaving Ambient mode must allow the same operation to succeed later.
+    device._ip_control_ambient_mode_active.return_value = False
+
+    await device.async_set_volume_level(0.30)
+
+    assert device._ip_absolute_volume_supported is True
+    assert device._attr_volume_level == 0.30
+    assert client.async_set_volume.await_count == 2
+    device._upnp.async_set_volume.assert_not_awaited()

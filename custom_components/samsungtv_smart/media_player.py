@@ -1595,11 +1595,18 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             try:
                 volume = await client.async_get_volume()
             except SamsungIPControlUnsupportedError as ex:
-                self._ip_absolute_volume_supported = False
-                self._log.debug(
-                    "IP Control absolute volume is not available on this TV: %s",
-                    ex,
-                )
+                if self._ip_control_ambient_mode_active():
+                    self._log.debug(
+                        "IP Control absolute volume unavailable while Ambient mode "
+                        "is active; not treating it as unsupported: %s",
+                        ex,
+                    )
+                else:
+                    self._ip_absolute_volume_supported = False
+                    self._log.debug(
+                        "IP Control absolute volume is not available on this TV: %s",
+                        ex,
+                    )
             except SamsungIPControlError as ex:
                 # Network/state errors must not be mistaken for a missing
                 # capability. We can retry on the next normal update.
@@ -1610,9 +1617,7 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
                 )
             else:
                 if self._ip_absolute_volume_supported is not True:
-                    self._log.info(
-                        "IP Control absolute volume detected for this TV"
-                    )
+                    self._log.info("IP Control absolute volume detected for this TV")
 
                 self._ip_absolute_volume_supported = True
                 self._attr_volume_level = volume / 100
@@ -1928,6 +1933,16 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             .get(self._entry_id, {})
             .get(DATA_IP_CONTROL_STATE_COORDINATOR)
         )
+
+    def _ip_control_ambient_mode_active(self) -> bool:
+        """Return whether the shared IP Control snapshot reports Ambient mode."""
+        coordinator = self._get_ip_control_state_coordinator()
+        data = getattr(coordinator, "data", None)
+        if not isinstance(data, dict) or data.get("powered_off"):
+            return False
+
+        tv_states = data.get("tv")
+        return isinstance(tv_states, dict) and tv_states.get("pictureMode") == "Ambient"
 
     def _get_ip_control_input_source(self) -> str | None:
         """Return the latest physical input from the shared IP Control snapshot."""
@@ -3139,11 +3154,18 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             try:
                 applied = await client.async_set_volume(target)
             except SamsungIPControlUnsupportedError as ex:
-                self._ip_absolute_volume_supported = False
-                self._log.debug(
-                    "IP Control absolute volume is not available on this TV: %s",
-                    ex,
-                )
+                if self._ip_control_ambient_mode_active():
+                    self._log.debug(
+                        "IP Control absolute volume unavailable while Ambient mode "
+                        "is active; not treating it as unsupported: %s",
+                        ex,
+                    )
+                else:
+                    self._ip_absolute_volume_supported = False
+                    self._log.debug(
+                        "IP Control absolute volume is not available on this TV: %s",
+                        ex,
+                    )
             except SamsungIPControlError as ex:
                 self._log.debug(
                     "IP Control absolute-volume set failed (%s); "
