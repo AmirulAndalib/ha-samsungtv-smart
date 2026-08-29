@@ -123,7 +123,7 @@ when calling each method with only the `AccessToken` (no extra params):
 | `remoteKeyControl` | ⚠️ needs param | `remoteKey` (see list below) | — | Virtual remote key sender. |
 | `volumeUpDnControl` | ⚠️ needs param | `control` ∈ `volumeUp` / `volumeDn` | `control` | Relative volume. |
 | `channelUpDnControl` | ⚠️ needs param | `control` ∈ `channelUp` / `channelDn` | `control` | Relative channel. |
-| `directVolumeControl` | ❌ | `volume` (0–100) | — | Absolute volume — **not implemented on Frame 2024**. Use `volumeUpDnControl` or SmartThings. |
+| `directVolumeControl` | ✅ (2025 Frame; see note) | `volume` (0–100) | `volume` | Absolute volume. **Measured working on a Frame**: the QN55LS03FAFXZA decompile declares `volume` int `0..100` and live-accepted `0..100` in normal TV mode, and a 2013 UE27F6000 accepted 50/60/80/100 ([#238](https://github.com/TheFab21/ha-samsungtv-smart/pull/238)). The earlier "not implemented on Frame 2024" entry was a `-32601` whose **display mode was not recorded** — and this method sits in the none-ambient dispatch map, which answers `-32601` while art/ambient is on screen. Treat `-32601` here as a mode, not a model. |
 | `inputSourceControl` | ❌ | `inputSource` | — | **Not implemented on Frame 2024.** Read-only via `getTVStates.inputSource`. To set input on a Frame: WebSocket `KEY_HDMIx` or SmartThings. |
 | `pictureModeControl` | ❌ | `pictureMode` | — | Read-only via `getTVStates.pictureMode` on Frame 2024. |
 | `pictureSizeControl` | ❌ | `pictureSize` | — | Read-only via `getTVStates.pictureSize`. |
@@ -168,16 +168,24 @@ control driver choosing not to expose picture calibration is not evidence that
 the TV lacks it.
 
 What it *does* establish is that **the method set diverges in both directions**.
-`directVolumeControl` (absolute volume, range 0–50) and `inputSourceControl`
+`directVolumeControl` and `inputSourceControl`
 (`HDMI1`–`HDMI4`, `TV`, `AV1`, `AV2`, `COMPONENT1`, `USB`) both work on the 2017
-TV and are `-32601` on a Frame 2024. Absence on the Frame therefore says nothing
-about an older model — which is precisely the mistake that kept pre-2020 TVs
-unsupported here for so long.
+TV. Absence on a Frame would therefore say nothing about an older model — the
+mistake that kept pre-2020 TVs unsupported here for so long.
 
-> **Unused opportunity:** this integration calls neither `directVolumeControl`
-> nor `inputSourceControl`, because both are dead on the Frames it was built
-> against. On a pre-2020 TV they would give absolute volume and input switching
-> over the local channel, with no SmartThings involved. Untested here.
+> **The 0–50 volume range is Savant's, not Samsung's.** The catalogue lists a
+> *profile range* of 0–50 for `directVolumeControl` — the bounds that control
+> driver declares for its own slider. Every measurement we have says the
+> protocol takes **0–100**: the QN55LS03FAFXZA firmware declares `volume` int
+> `0..100` and accepted the full range live, and a 2013 UE27F6000 accepted
+> 50/60/80/100. Do not clamp to 50.
+
+> **No longer unused.** `inputSourceControl` was wired up in
+> [#228](https://github.com/TheFab21/ha-samsungtv-smart/pull/228), and
+> `directVolumeControl` in
+> [#238](https://github.com/TheFab21/ha-samsungtv-smart/pull/238) — the latter
+> probes the capability per TV rather than assuming it from the model, and does
+> not latch "unsupported" on a `-32601` raised while ambient mode is active.
 
 The measurements below come from the single 2018 TV in
 [#206](https://github.com/TheFab21/ha-samsungtv-smart/issues/206) — one data
@@ -320,8 +328,9 @@ Several methods map directly onto current pain points:
   SmartThings.
 - Set picture mode / picture size / sound mode / speaker / picture levels — all
   `-32601`. Read-only via `getTVStates`/`getVideoStates`. Use SmartThings for setting.
-- Set absolute volume (`directVolumeControl` → not found). Only `volumeUpDnControl`
-  works. Use SmartThings for absolute volume.
+- ~~Set absolute volume (`directVolumeControl` → not found).~~ **Retracted**: the
+  2025 Frame firmware declares and accepts `0..100`, and the original `-32601`
+  has no recorded display mode. See the `directVolumeControl` row above.
 
 So IP Control on a consumer Frame is essentially a **power + art-mode + virtual
 remote + app launcher + readout** API. Not a full replacement for SmartThings or
