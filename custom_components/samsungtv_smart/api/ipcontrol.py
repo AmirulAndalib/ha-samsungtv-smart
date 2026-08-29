@@ -489,7 +489,18 @@ class SamsungIPControl:
         return value == "muteOn"
 
     async def async_get_volume(self) -> int:
-        """Return the absolute volume (0-100) when supported."""
+        """Return the absolute volume (0-100) when supported.
+
+        0-100 is the protocol range, measured: the QN55LS03FAFXZA firmware
+        declares ``volume`` int ``0..100`` and accepts the full range, and a
+        2013 UE27F6000 accepted 50/60/80/100. The 0-50 in the Savant 2017
+        profile is that driver's own slider bound, not a TV constraint.
+
+        Raises ``SamsungIPControlUnsupportedError`` (-32601) on a TV that
+        does not implement the method — but note that the same error is
+        raised in art/ambient mode by a TV that does, so callers must not
+        treat one -32601 as a permanent verdict.
+        """
         result = await self._async_request("directVolumeControl")
         value = result.get("volume")
 
@@ -537,11 +548,16 @@ class SamsungIPControl:
     async def async_volume_up(self) -> None:
         """Step the volume up by one using relative IP Control.
 
-        ``volumeUpDnControl`` is the only volume setter that works via IP
-        Control on a Frame 2024/2025 — ``directVolumeControl`` (absolute
-        volume) returns ``-32601 "Method not found"``. There is no getter:
-        the call is fire-and-forget, matching the WebSocket ``KEY_VOLUP``
-        semantics it replaces.
+        There is no getter: the call is fire-and-forget, matching the
+        WebSocket ``KEY_VOLUP`` semantics it replaces.
+
+        This is the volume setter that works everywhere. For an absolute
+        level use :meth:`async_set_volume` when the TV implements it —
+        which is probed per device, not inferred from the model: the
+        earlier claim here that ``directVolumeControl`` is absent on Frames
+        came from a ``-32601`` whose display mode was never recorded, and
+        that method is dispatched from a table that is inactive in
+        art/ambient mode. See ``IP_Control_Protocol_Reference.md``.
         """
         await self._async_request("volumeUpDnControl", {"control": "volumeUp"})
 
