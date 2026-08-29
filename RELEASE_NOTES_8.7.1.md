@@ -1,4 +1,4 @@
-# Release notes — 8.7.0
+# Release notes — 8.7.1
 
 If this project is useful to you, you can support its development:
 
@@ -8,6 +8,29 @@ If this project is useful to you, you can support its development:
 > it stands on its own if you are coming from 8.5.x. No breaking changes and
 > nothing to reconfigure — but see [One default changed](#one-default-changed)
 > for the single behavioural change.
+
+## ⚠️ If you have ever shared a diagnostics file, rotate your API keys
+
+Until this release, the **Download diagnostics** button wrote your art
+identification keys out in clear text:
+
+- `art_llm_api_key` — your OpenAI or Gemini key
+- `art_vision_api_key` — your Google Vision key
+- `ip_control_token`
+
+Only four fields were being redacted (the SmartThings token, the MAC, the
+WebSocket token and the OAuth token); everything else was published verbatim.
+Diagnostics downloads are exactly what we ask for in bug reports, so any file
+you attached to a GitHub issue — or sent to anyone — exposed those keys. The
+first two are **billable**.
+
+8.7.1 redacts every credential. That protects future downloads only: a file
+already posted publicly cannot be un-published, and deleting the comment does
+not remove it from the issue history.
+
+**If you have ever shared a diagnostics file, revoke and regenerate those two
+keys now** — [OpenAI](https://platform.openai.com/api-keys), Google Cloud
+console. Sorry: this was our bug, not a mistake on your side.
 
 ## Highlights
 
@@ -25,6 +48,9 @@ If this project is useful to you, you can support its development:
 - **Hue Sync controls**, where the TV exposes them.
 - **Older Samsung TVs get local control back** — Samsung moved the IP Control
   port in 2020 and we only ever tried the new one.
+- **Absolute volume over the local channel**, on TVs that implement it —
+  including with an HDMI/eARC soundbar selected, where the slider used to be
+  hidden. Contributed by [@albertoriella](https://github.com/albertoriella).
 - **Artwork identification recognises famous works** it used to refuse, and
   **picture mode works outside English**.
 
@@ -113,6 +139,32 @@ labelled with its raw key, `content_list_interval`, and that the SmartThings
 label was long enough to wrap over its own value on a phone. Both are fixed, in
 every supported language.
 
+## Absolute volume over IP Control
+
+The volume slider used to be driven by UPnP/SmartThings, and was hidden
+entirely when an external receiver or soundbar was selected, because those
+paths only reach the TV's internal speakers.
+
+TVs that implement the local `directVolumeControl` method now get the slider
+back, external audio included — validated on a UE27F6000 with an S5B soundbar
+over HDMI/eARC, where setting 20/10/30/50/60/80/100 moved the actual soundbar
+volume and reported back correctly. With external audio, mute now goes through
+the same `KEY_MUTE` path the physical remote uses, which the TV relays over
+HDMI-CEC.
+
+The capability is **probed per TV**, never inferred from the model or the year:
+a TV that answers gets the slider, one that refuses keeps the previous
+behaviour. That matters because the same JSON-RPC "method not found" error is
+also what a TV returns for a method it *does* support while Art Mode is on
+screen — so a refusal seen in Art Mode is not treated as a verdict on the
+model, and the slider is not lost until the next restart.
+
+While confirming that, three claims in our own protocol reference turned out to
+be wrong and have been corrected: absolute volume is **not** missing on Frames
+(measured on a 2023 Frame and in a 2025 Frame's firmware), and the "0–50"
+volume range came from a third-party control driver's slider bounds rather than
+from Samsung.
+
 ## A repaired TV can be re-linked
 
 If your TV's mainboard is replaced, its MAC address changes and SmartThings
@@ -196,3 +248,6 @@ HACS → update → restart Home Assistant. Nothing to reconfigure.
 Coming from 8.5.x, the two things to know are the new **IP Control interval**
 default of 10 s described above, and — if your TV was ever repaired or reset —
 the new **Reconfigure → SmartThings device** step.
+
+And whatever version you are coming from: if you have ever shared a diagnostics
+file, rotate your art identification keys as described at the top of this note.
