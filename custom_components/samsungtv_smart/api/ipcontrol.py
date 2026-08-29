@@ -488,8 +488,54 @@ class SamsungIPControl:
             raise SamsungIPControlError(f"unexpected mute response: {result!r}")
         return value == "muteOn"
 
+    async def async_get_volume(self) -> int:
+        """Return the absolute volume (0-100) when supported."""
+        result = await self._async_request("directVolumeControl")
+        value = result.get("volume")
+
+        try:
+            volume = int(value)
+        except (TypeError, ValueError) as ex:
+            raise SamsungIPControlError(
+                f"invalid directVolumeControl response: {result!r}"
+            ) from ex
+
+        if not 0 <= volume <= 100:
+            raise SamsungIPControlError(
+                f"volume out of range in directVolumeControl response: {result!r}"
+            )
+
+        return volume
+
+    async def async_set_volume(self, value: int) -> int:
+        """Set and return the absolute volume (0-100) when supported."""
+        volume = int(value)
+
+        if not 0 <= volume <= 100:
+            raise SamsungIPControlError("volume must be between 0 and 100")
+
+        result = await self._async_request(
+            "directVolumeControl",
+            {"volume": volume},
+        )
+        response_value = result.get("volume", volume)
+
+        try:
+            response_volume = int(response_value)
+        except (TypeError, ValueError) as ex:
+            raise SamsungIPControlError(
+                f"invalid directVolumeControl response: {result!r}"
+            ) from ex
+
+        if not 0 <= response_volume <= 100:
+            raise SamsungIPControlError(
+                f"volume out of range in directVolumeControl response: {result!r}"
+            )
+
+        return response_volume
+
     async def async_volume_up(self) -> None:
-        """Step the volume up by one (relative — no absolute level over IP Control).
+        """Step the volume up by one using relative IP Control.
 
         ``volumeUpDnControl`` is the only volume setter that works via IP
         Control on a Frame 2024/2025 — ``directVolumeControl`` (absolute

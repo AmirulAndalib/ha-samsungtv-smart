@@ -80,6 +80,7 @@ from .api.ipcontrol import (
     SamsungIPControl,
     SamsungIPControlAuthError,
     SamsungIPControlError,
+    SamsungIPControlUnsupportedError,
 )
 from .api.samsungcast import SamsungCastTube
 from .api.samsungws import ArtModeStatus, SamsungTVAsyncRest, SamsungTVWS
@@ -700,6 +701,10 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         # PowerState='standby' override or the potentially-stale art_api cache.
         self._ip_control_client: SamsungIPControl | None = None
         self._ip_control_token_cached: str | None = None
+        # directVolumeControl is model-dependent. Some Samsung TVs support
+        # absolute volume locally, including with an external HDMI/eARC audio
+        # device, while others do not. None means "not probed yet".
+        self._ip_absolute_volume_supported: bool | None = None
         # Current physical input reported by the shared getTVStates coordinator.
         # Also updated optimistically after a successful local source change.
         self._ip_input_source: str | None = None
@@ -1145,14 +1150,17 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         """
         entry = self.hass.config_entries.async_get_entry(self._entry_id)
         token = entry.data.get(CONF_IP_CONTROL_TOKEN) if entry else None
+
         if not token or not self._get_option(CONF_ENABLE_IP_CONTROL, True):
-            # Un-paired, or the IP Control channel was disabled in options —
-            # drop any cached client/value and behave as if not paired.
+            # Unpaired, or IP Control disabled.
             if self._ip_control_client is not None:
                 self._ip_control_client = None
                 self._ip_control_token_cached = None
+            self._ip_absolute_volume_supported = None
             return None
+
         port = ip_control_port(entry.data)
+
         if (
             self._ip_control_client is None
             or self._ip_control_token_cached != token
@@ -1162,6 +1170,8 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
                 self.hass, self._host, port=port, token=token
             )
             self._ip_control_token_cached = token
+            self._ip_absolute_volume_supported = None
+
         return self._ip_control_client
 
     def _on_art_transition(self) -> None:
@@ -1574,17 +1584,53 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
 
     async def _update_volume_info(self):
         """Update the volume info."""
-        if self._state == MediaPlayerState.ON:
-            # if self._st and self._setvolumebyst:
-            #     self._attr_volume_level = self._st.volume
-            #     self._attr_is_volume_muted = self._st.muted
-            #     return
+        if self._state != MediaPlayerState.ON:
+            return
 
-            if (volume := await self._upnp.async_get_volume()) is not None:
-                self._attr_volume_level = int(volume) / 100
+        # Prefer local IP Control when this TV implements directVolumeControl.
+        # This is discovered per device rather than inferred from model/year.
+        client = self._get_ip_control_client()
+
+        if client is not None and self._ip_absolute_volume_supported is not False:
+            try:
+                volume = await client.async_get_volume()
+            except SamsungIPControlUnsupportedError as ex:
+                if self._ip_control_ambient_mode_active():
+                    self._log.debug(
+                        "IP Control absolute volume unavailable while Ambient mode "
+                        "is active; not treating it as unsupported: %s",
+                        ex,
+                    )
+                else:
+                    self._ip_absolute_volume_supported = False
+                    self._log.debug(
+                        "IP Control absolute volume is not available on this TV: %s",
+                        ex,
+                    )
+            except SamsungIPControlError as ex:
+                # Network/state errors must not be mistaken for a missing
+                # capability. We can retry on the next normal update.
+                self._log.debug(
+                    "IP Control absolute-volume read failed (%s); "
+                    "falling back to UPnP",
+                    ex,
+                )
             else:
-                self._attr_volume_level = None
-            self._attr_is_volume_muted = await self._upnp.async_get_mute()
+                if self._ip_absolute_volume_supported is not True:
+                    self._log.info("IP Control absolute volume detected for this TV")
+
+                self._ip_absolute_volume_supported = True
+                self._attr_volume_level = volume / 100
+                self._attr_is_volume_muted = await self._upnp.async_get_mute()
+                return
+
+        # Existing behaviour for TVs without local absolute-volume support.
+        if (volume := await self._upnp.async_get_volume()) is not None:
+            self._attr_volume_level = int(volume) / 100
+        else:
+            self._attr_volume_level = None
+
+        self._attr_is_volume_muted = await self._upnp.async_get_mute()
 
     def _get_external_entity_status(self):
         """Get status from external binary sensor."""
@@ -1887,6 +1933,16 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             .get(self._entry_id, {})
             .get(DATA_IP_CONTROL_STATE_COORDINATOR)
         )
+
+    def _ip_control_ambient_mode_active(self) -> bool:
+        """Return whether the shared IP Control snapshot reports Ambient mode."""
+        coordinator = self._get_ip_control_state_coordinator()
+        data = getattr(coordinator, "data", None)
+        if not isinstance(data, dict) or data.get("powered_off"):
+            return False
+
+        tv_states = data.get("tv")
+        return isinstance(tv_states, dict) and tv_states.get("pictureMode") == "Ambient"
 
     def _get_ip_control_input_source(self) -> str | None:
         """Return the latest physical input from the shared IP Control snapshot."""
@@ -2592,18 +2648,21 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
     def supported_features(self) -> int:
         """Flag media player features that are supported."""
         features = SUPPORT_SAMSUNGTV_SMART
+
         if self.state == MediaPlayerState.ON:
             features |= MediaPlayerEntityFeature.BROWSE_MEDIA
+
         if self._st:
             features |= MediaPlayerEntityFeature.SELECT_SOUND_MODE
-        # Absolute volume (the slider) only targets the TV's internal volume:
-        # with an external output (HDMI-eARC receiver, optical, BT soundbar)
-        # UPnP/SmartThings setvolume is a no-op, so drop VOLUME_SET to hide the
-        # dead slider. VOLUME_STEP and VOLUME_MUTE are KEPT: the TV relays the
-        # up/down/mute keys to the external device over CEC/ARC (confirmed by a
-        # user with an eARC AVR), and the same relay applies to BT soundbars.
-        if self._speaker_output_is_internal() is False:
+
+        # Preserve the 8.7.0 protection for external receivers/soundbars unless
+        # this specific TV has positively demonstrated directVolumeControl.
+        if (
+            self._speaker_output_is_internal() is False
+            and self._ip_absolute_volume_supported is not True
+        ):
             features &= ~MediaPlayerEntityFeature.VOLUME_SET
+
         return features
 
     def _smartthings_reports_art(self) -> bool:
@@ -3035,23 +3094,44 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             return False
 
     async def async_mute_volume(self, mute):
-        """Send mute command."""
+        """Set mute state."""
         if self._state != MediaPlayerState.ON:
             return
+
         if self.is_volume_muted is not None and mute == self.is_volume_muted:
             return
+
+        # With an external receiver/soundbar, the TV remote's KEY_MUTE is
+        # relayed to the external audio device over HDMI-CEC/ARC/eARC.
+        # An explicit IP Control muteControl state is not equally reliable
+        # with external audio, so use the same toggle path as the physical
+        # remote. The state guard above ensures we only toggle when needed.
+        if self._speaker_output_is_internal() is False:
+            await self.async_send_command("KEY_MUTE")
+
+            if self.is_volume_muted is not None:
+                self._attr_is_volume_muted = mute
+
+            return
+
+        # Internal speakers retain the existing IP Control behaviour, with
+        # WebSocket KEY_MUTE as fallback.
         client = self._get_ip_control_client()
         sent_via_ip_control = False
+
         if client is not None:
             try:
                 await client.async_set_mute(mute)
                 sent_via_ip_control = True
             except SamsungIPControlError as ex:
                 self._log.debug(
-                    "IP Control mute failed (%s); falling back to WebSocket", ex
+                    "IP Control mute failed (%s); falling back to WebSocket",
+                    ex,
                 )
+
         if not sent_via_ip_control:
             await self.async_send_command("KEY_MUTE")
+
         if self.is_volume_muted is not None:
             self._attr_is_volume_muted = mute
 
@@ -3059,25 +3139,61 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         """Set the volume level."""
         if self._state != MediaPlayerState.ON:
             return
+
         if self.volume_level is None:
             return
-        # Absolute volume only reaches the TV's internal speakers; with an
-        # external output the command is silently ignored by the TV. Warn
-        # (rather than raise, to keep legacy automations from erroring) and
-        # skip the pointless call. Use volume_up/down instead — the TV relays
-        # those to the external device over CEC/ARC.
-        if self._speaker_output_is_internal() is False:
+
+        target = int(volume * 100)
+        speaker_internal = self._speaker_output_is_internal()
+
+        # Prefer directVolumeControl whenever the capability has not already
+        # been ruled out for this IP Control client.
+        client = self._get_ip_control_client()
+
+        if client is not None and self._ip_absolute_volume_supported is not False:
+            try:
+                applied = await client.async_set_volume(target)
+            except SamsungIPControlUnsupportedError as ex:
+                if self._ip_control_ambient_mode_active():
+                    self._log.debug(
+                        "IP Control absolute volume unavailable while Ambient mode "
+                        "is active; not treating it as unsupported: %s",
+                        ex,
+                    )
+                else:
+                    self._ip_absolute_volume_supported = False
+                    self._log.debug(
+                        "IP Control absolute volume is not available on this TV: %s",
+                        ex,
+                    )
+            except SamsungIPControlError as ex:
+                self._log.debug(
+                    "IP Control absolute-volume set failed (%s); "
+                    "using the existing fallback when possible",
+                    ex,
+                )
+            else:
+                self._ip_absolute_volume_supported = True
+                self._attr_volume_level = applied / 100
+                return
+
+        # Without confirmed local absolute-volume support, retain the 8.7.0
+        # protection for external receivers/soundbars.
+        if speaker_internal is False:
             self._log.warning(
                 "volume_set ignored: the TV's speaker output is external "
-                "(receiver/soundbar) and absolute volume only targets the "
-                "internal speakers — use volume_up/volume_down instead"
+                "(receiver/soundbar) and IP Control absolute volume is not "
+                "available — use volume_up/volume_down instead"
             )
             return
+
+        # Internal speakers retain the existing SmartThings/UPnP behaviour.
         if self._st and self._setvolumebyst:
-            await self._st.async_send_command("setvolume", int(volume * 100))
+            await self._st.async_send_command("setvolume", target)
         else:
-            await self._upnp.async_set_volume(int(volume * 100))
-        self._attr_volume_level = volume
+            await self._upnp.async_set_volume(target)
+
+        self._attr_volume_level = target / 100
 
     def media_play_pause(self):
         """Simulate play pause media player."""
