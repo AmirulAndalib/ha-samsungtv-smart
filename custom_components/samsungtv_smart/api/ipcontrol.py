@@ -623,20 +623,18 @@ class SamsungIPControl:
         """
         return await self._async_request("getVideoStates")
 
-    async def async_open_browser(self, url: str) -> str:
+    async def async_open_browser(self, url: str) -> None:
         """Open a URL in the Samsung web browser using IP Control."""
         if not url:
             raise SamsungIPControlError("browser URL must not be empty")
-    
-        result = await self._async_request(
+
+        await self._async_request(
             "directAccessControl",
             {
                 "applicationName": "webBrowser",
                 "url": url,
             },
         )
-
-        return result.get("applicationName", "")
 
     # -- transport -----------------------------------------------------------
 

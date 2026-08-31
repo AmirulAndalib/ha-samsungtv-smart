@@ -3253,25 +3253,24 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
 
     async def _async_open_browser(self, url: str) -> bool:
         """Open URL using IP Control, falling back to WebSocket."""
-    
+
         ip_client = self._get_ip_control_client()
-    
+
         if ip_client is not None:
             try:
                 await ip_client.async_open_browser(url)
-                self._log.debug(
-                    "Browser URL opened using IP Control directAccessControl: %s",
-                    url,
+                self._log.info(
+                    "Browser launched using IP Control; the opened URL cannot be confirmed"
                 )
                 return True
-    
+
             except SamsungIPControlError as ex:
                 self._log.debug(
                     "IP Control browser launch failed (%s); "
                     "falling back to WebSocket",
                     ex,
                 )
-    
+
         return await self.async_send_command(url, CMD_OPEN_BROWSER)
 
     async def _async_ip_control_source(self, source_key: str) -> bool:
