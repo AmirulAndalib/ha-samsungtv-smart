@@ -119,7 +119,7 @@ when calling each method with only the `AccessToken` (no extra params):
 | `powerControl` | ✅ getter/setter | `power` ∈ `powerOn` / `powerOff` / `reboot` | `power` | Read returns `powerOn` in Art Mode (Art Mode = physically on). Read-and-set via the same method. |
 | `artModeControl` | ✅ getter/setter | `artMode` ∈ `artModeOn` / `artModeOff` | `artMode` | Case-sensitive: only `artModeControl` (capital M) works. `artmodeControl` / `ArtModeControl` → `-32601`. **Authoritative read-source for Art Mode state.** |
 | `muteControl` | ✅ getter/setter | `mute` ∈ `muteOn` / `muteOff` | `mute` | |
-| `directAccessControl` | ✅ getter/setter | `applicationName` (+ optional `url`) | `applicationName` | Launches an app. Read returns `"unknown"` when no app launched via this method. |
+| `directAccessControl` | ✅ getter/setter | `applicationName` (+ optional `url`) | `applicationName` | Launches an app. Read returns `"unknown"` when no app launched via this method. On a 2020 QE65Q80TATXZT, setting `applicationName: "webBrowser"` with `url` opens the Samsung browser at the requested URL; a subsequent getter returns `{"applicationName":"webBrowser"}` but does not expose the current URL. |
 | `remoteKeyControl` | ⚠️ needs param | `remoteKey` (see list below) | — | Virtual remote key sender. |
 | `volumeUpDnControl` | ⚠️ needs param | `control` ∈ `volumeUp` / `volumeDn` | `control` | Relative volume. |
 | `channelUpDnControl` | ⚠️ needs param | `control` ∈ `channelUp` / `channelDn` | `control` | Relative channel. |
