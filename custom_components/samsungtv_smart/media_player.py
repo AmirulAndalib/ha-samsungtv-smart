@@ -3259,8 +3259,14 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         if ip_client is not None:
             try:
                 await ip_client.async_open_browser(url)
+                # Name the URL we asked for: the TV confirms only that the
+                # browser was launched (its getter returns applicationName and
+                # never the current page), so a "it opened the wrong page"
+                # report is only diagnosable if the log says what we requested.
                 self._log.info(
-                    "Browser launched using IP Control; the opened URL cannot be confirmed"
+                    "Browser launched via IP Control at %s; the TV does not "
+                    "report which URL it actually opened",
+                    url,
                 )
                 return True
 
