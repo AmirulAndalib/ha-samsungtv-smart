@@ -348,21 +348,25 @@ async def async_setup_entry(
         SERVICE_ART_GET_ARTMODE,
         {},
         "async_art_get_artmode",
+        supports_response=SupportsResponse.OPTIONAL,
     )
     platform.async_register_entity_service(
         SERVICE_ART_SET_ARTMODE,
         {vol.Required(ATTR_ENABLED): cv.boolean},
         "async_art_set_artmode",
+        supports_response=SupportsResponse.OPTIONAL,
     )
     platform.async_register_entity_service(
         SERVICE_ART_AVAILABLE,
         {vol.Optional(ATTR_CATEGORY_ID): cv.string},
         "async_art_available",
+        supports_response=SupportsResponse.OPTIONAL,
     )
     platform.async_register_entity_service(
         SERVICE_ART_GET_CURRENT,
         {},
         "async_art_get_current",
+        supports_response=SupportsResponse.OPTIONAL,
     )
     platform.async_register_entity_service(
         SERVICE_ART_IDENTIFY,
@@ -378,6 +382,7 @@ async def async_setup_entry(
             vol.Optional(ATTR_SHOW, default=True): cv.boolean,
         },
         "async_art_select_image",
+        supports_response=SupportsResponse.OPTIONAL,
     )
     platform.async_register_entity_service(
         SERVICE_ART_UPLOAD,
@@ -385,6 +390,7 @@ async def async_setup_entry(
             vol.Required(ATTR_FILE_PATH): cv.string,
             vol.Optional(ATTR_MATTE_ID, default="shadowbox_polar"): cv.string,
             vol.Optional(ATTR_FILE_TYPE, default="jpg"): cv.string,
+            vol.Optional(ATTR_SHOW, default=False): cv.boolean,
         },
         "async_art_upload",
         supports_response=SupportsResponse.OPTIONAL,
@@ -407,6 +413,7 @@ async def async_setup_entry(
         SERVICE_ART_DELETE,
         {vol.Required(ATTR_CONTENT_ID): cv.string},
         "async_art_delete",
+        supports_response=SupportsResponse.OPTIONAL,
     )
     platform.async_register_entity_service(
         SERVICE_SEND_TEXT,
@@ -417,6 +424,7 @@ async def async_setup_entry(
         SERVICE_ART_GET_THUMBNAIL,
         {vol.Required(ATTR_CONTENT_ID): cv.string},
         "async_art_get_thumbnail",
+        supports_response=SupportsResponse.OPTIONAL,
     )
     platform.async_register_entity_service(
         SERVICE_ART_GET_THUMBNAILS_BATCH,
@@ -428,16 +436,19 @@ async def async_setup_entry(
             vol.Optional("cleanup_orphans", default=True): cv.boolean,
         },
         "async_art_get_thumbnails_batch",
+        supports_response=SupportsResponse.OPTIONAL,
     )
     platform.async_register_entity_service(
         SERVICE_ART_SET_BRIGHTNESS,
         {vol.Required(ATTR_BRIGHTNESS): vol.All(vol.Coerce(int), vol.Range(0, 100))},
         "async_art_set_brightness",
+        supports_response=SupportsResponse.OPTIONAL,
     )
     platform.async_register_entity_service(
         SERVICE_ART_GET_BRIGHTNESS,
         {},
         "async_art_get_brightness",
+        supports_response=SupportsResponse.OPTIONAL,
     )
     platform.async_register_entity_service(
         SERVICE_ART_SET_COLOR_TEMPERATURE,
@@ -447,11 +458,13 @@ async def async_setup_entry(
             )
         },
         "async_art_set_color_temperature",
+        supports_response=SupportsResponse.OPTIONAL,
     )
     platform.async_register_entity_service(
         SERVICE_ART_GET_COLOR_TEMPERATURE,
         {},
         "async_art_get_color_temperature",
+        supports_response=SupportsResponse.OPTIONAL,
     )
     platform.async_register_entity_service(
         SERVICE_ART_CHANGE_MATTE,
@@ -460,6 +473,7 @@ async def async_setup_entry(
             vol.Required(ATTR_MATTE_ID): cv.string,
         },
         "async_art_change_matte",
+        supports_response=SupportsResponse.OPTIONAL,
     )
     platform.async_register_entity_service(
         SERVICE_ART_SET_PHOTO_FILTER,
@@ -468,16 +482,19 @@ async def async_setup_entry(
             vol.Required(ATTR_FILTER_ID): cv.string,
         },
         "async_art_set_photo_filter",
+        supports_response=SupportsResponse.OPTIONAL,
     )
     platform.async_register_entity_service(
         SERVICE_ART_GET_PHOTO_FILTER_LIST,
         {},
         "async_art_get_photo_filter_list",
+        supports_response=SupportsResponse.OPTIONAL,
     )
     platform.async_register_entity_service(
         SERVICE_ART_GET_MATTE_LIST,
         {},
         "async_art_get_matte_list",
+        supports_response=SupportsResponse.OPTIONAL,
     )
     platform.async_register_entity_service(
         SERVICE_ART_SET_FAVOURITE,
@@ -486,6 +503,7 @@ async def async_setup_entry(
             vol.Optional(ATTR_STATUS, default="on"): cv.string,
         },
         "async_art_set_favourite",
+        supports_response=SupportsResponse.OPTIONAL,
     )
     platform.async_register_entity_service(
         SERVICE_ART_SET_SLIDESHOW,
@@ -503,6 +521,7 @@ async def async_setup_entry(
             ),
         },
         "async_art_set_slideshow",
+        supports_response=SupportsResponse.OPTIONAL,
     )
     platform.async_register_entity_service(
         SERVICE_ART_SET_AUTO_ROTATION,
@@ -516,6 +535,7 @@ async def async_setup_entry(
             ),
         },
         "async_art_set_auto_rotation",
+        supports_response=SupportsResponse.OPTIONAL,
     )
 
 
@@ -4094,11 +4114,64 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             self._log.error("Error selecting artwork: %s", ex)
             return {"error": str(ex)}
 
+    async def _validate_matte_id(self, matte_id: str | None) -> str | None:
+        """Return an error message when the TV cannot render this matte id.
+
+        A matte is "<type>_<color>" and BOTH halves must come from the TV's own
+        lists, which differ by model — sending an id built from a type and a
+        colour this panel does not know makes the TV reject the upload with its
+        own error, or (worse, seen on a QN55LS03HEFXZA) store the artwork and
+        then fail rendering it, which looks like a TV fault rather than a bad
+        parameter (#243).
+
+        Returns None when the id is usable, or when the TV's lists could not be
+        read — an unreachable list must never block an upload that would have
+        worked.
+        """
+        if not matte_id or matte_id == "none":
+            return None
+
+        try:
+            matte_types, matte_colors = await self._art_api.get_matte_list(
+                include_color=True
+            )
+        except Exception as ex:  # noqa: BLE001 - never block an upload on this
+            self._log.debug("Frame Art: could not read the matte list: %s", ex)
+            return None
+
+        def _ids(entries, key: str) -> set[str]:
+            """Names from a matte list, which is dicts on some models, strings
+            on others — the same shape the matte selects handle."""
+            out: set[str] = set()
+            for entry in entries or []:
+                value = entry.get(key) if isinstance(entry, dict) else entry
+                if isinstance(value, str) and value:
+                    out.add(value)
+            return out
+
+        types = _ids(matte_types, "matte_type")
+        colors = _ids(matte_colors, "color")
+        if not types or not colors:
+            return None
+
+        matte_type, _, matte_color = matte_id.partition("_")
+        unknown = []
+        if matte_type not in types:
+            unknown.append(f"type '{matte_type}' (this TV has: {sorted(types)})")
+        if matte_color not in colors:
+            unknown.append(f"colour '{matte_color}' (this TV has: {sorted(colors)})")
+        if unknown:
+            return f"matte_id '{matte_id}' is not valid on this TV: " + "; ".join(
+                unknown
+            )
+        return None
+
     async def async_art_upload(
         self,
         file_path: str,
         matte_id: str = "shadowbox_polar",
         file_type: str = "jpg",
+        show: bool = False,
     ) -> dict:
         """Upload an image to the TV as artwork."""
         self._log.info("Frame Art: Starting upload of %s", file_path)
@@ -4131,6 +4204,10 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
                 matte_id,
             )
 
+            if matte_error := await self._validate_matte_id(matte_id):
+                self._log.error("Frame Art: %s", matte_error)
+                return {"error": matte_error}
+
             content_id = await self._art_api.upload(
                 file_path,
                 matte=matte_id,
@@ -4150,6 +4227,9 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
                 # to pick it up. Retry this specific content_id with backoff in
                 # the background until its thumbnail is available.
                 self.hass.async_create_task(self._retry_new_thumbnail(content_id))
+
+                if show:
+                    await self.async_art_select_image(content_id, show=True)
 
                 return {"success": True, "content_id": content_id}
 
