@@ -30,6 +30,7 @@ This fork brings improved WebSocket stability, full Samsung Frame TV Art Mode su
   - [Detecting Art Mode vs. watching TV](#detecting-art-mode-vs-watching-tv)
 - [Services](#services)
   - [Standard TV Services](#standard-tv-services)
+  - [Driving the TV like a remote (D-pad, Home, Back…)](#driving-the-tv-like-a-remote-d-pad-home-back)
   - [Frame Art Services](#frame-art-services)
 - [Frame Art Mode](#frame-art-mode)
   - [What happens to your image](#what-happens-to-your-image)
@@ -559,6 +560,62 @@ data:
   media_content_type: send_key
   media_content_id: KEY_MUTE
 ```
+
+### Driving the TV like a remote (D-pad, Home, Back…)
+
+Everything the on-screen Samsung remote does is available as a service call, so
+you can build a remote dashboard, bind keys to physical buttons, or script a
+navigation sequence. Use the `remote.<tv_name>` entity — it takes a **list** of
+keys and a repeat count:
+
+```yaml
+action: remote.send_command
+target:
+  entity_id: remote.samsung_tv
+data:
+  command:
+    - KEY_HOME
+    - KEY_RIGHT
+    - KEY_ENTER
+  num_repeats: 1
+```
+
+The keys for the navigation cluster:
+
+| Button | Key |
+|---|---|
+| Up / Down / Left / Right | `KEY_UP` / `KEY_DOWN` / `KEY_LEFT` / `KEY_RIGHT` |
+| Select / OK | `KEY_ENTER` |
+| Back / Return | `KEY_RETURN` |
+| Home | `KEY_HOME` |
+| Info | `KEY_INFO` |
+| Menu | `KEY_MENU` |
+| Guide | `KEY_GUIDE` |
+| Exit | `KEY_EXIT` |
+| Channel list | `KEY_CH_LIST` |
+
+The full key list is in
+[Key_codes.md](https://github.com/jaruba/ha-samsungtv-tizen/blob/master/Key_codes.md).
+Not every key exists on every model — a key the TV does not know is simply
+ignored.
+
+**Timing.** Keys in a sequence are sent 0.5 s apart. When a menu needs longer
+to appear, insert a delay in milliseconds as its own step (clamped to
+0.2–2 s) — this works in the `media_player.play_media` form, where the sequence
+is one `+`-joined string:
+
+```yaml
+action: media_player.play_media
+target:
+  entity_id: media_player.samsung_tv
+data:
+  media_content_type: send_key
+  media_content_id: KEY_HOME+1500+KEY_RIGHT+KEY_ENTER
+```
+
+The same string also accepts `ST_` source keys (routed through SmartThings) and
+`IP_` source keys (routed through IP Control), so a single sequence can mix
+input switching with remote keys.
 
 **Typing text into a native Tizen text field:**
 
