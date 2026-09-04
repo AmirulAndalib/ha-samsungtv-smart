@@ -590,6 +590,23 @@ class SamsungIPControl:
             raise SamsungIPControlError(f"invalid inputSource response: {result!r}")
         return response_value
 
+    async def async_panel_shows_art(self) -> bool | None:
+        """Whether the PANEL is displaying art right now, or None if unknown.
+
+        Read from ``getTVStates.pictureMode``, which is ``"Ambient"`` exactly
+        while art is on screen. This is the signal to consult before WRITING
+        art mode: it is independent of the ``artModeControl`` flag, which can
+        wedge "on" on some firmware (the wedge this integration documents on a
+        QE55LS03D), and of the WebSocket art channel, which can go stale. A
+        plain getter, safe on any TV state and cheap enough to call once per
+        write.
+        """
+        states = await self._async_request("getTVStates")
+        mode = states.get("pictureMode")
+        if not isinstance(mode, str) or not mode:
+            return None
+        return mode == "Ambient"
+
     async def async_get_tv_states(self) -> dict[str, Any]:
         """Return the TV's general state snapshot (read-only).
 

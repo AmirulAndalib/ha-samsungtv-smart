@@ -36,7 +36,7 @@ class SwitchWritePathTest(unittest.TestCase):
         )
 
     def test_the_websocket_fallback_is_still_reachable(self):
-        self.assertIn("return await self._art_api.set_artmode(turn_on)", self.block)
+        self.assertIn("await self._art_api.set_artmode(turn_on)", self.block)
 
     def test_the_option_defaults_to_off(self):
         helper = _block(
@@ -70,13 +70,14 @@ class NoUngatedSetterTest(unittest.TestCase):
                 for line_no, line in enumerate(source.splitlines(), 1):
                     if setter + "()" not in line:
                         continue
-                    # The nearest 40 lines above the call must mention the option.
+                    # The nearest 60 lines above the call must show the gate —
+                    # the option itself, or the switch's helper that reads it.
                     context = "\n".join(
-                        source.splitlines()[max(0, line_no - 40) : line_no]
+                        source.splitlines()[max(0, line_no - 60) : line_no]
                     )
-                    self.assertIn(
-                        "CONF_IP_CONTROL_ART_MODE",
-                        context,
+                    self.assertTrue(
+                        "CONF_IP_CONTROL_ART_MODE" in context
+                        or "self._ip_control_art_mode()" in context,
                         f"{name}:{line_no} calls {setter} with no visible gate",
                     )
 

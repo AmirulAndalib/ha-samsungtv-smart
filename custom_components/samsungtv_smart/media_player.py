@@ -86,6 +86,7 @@ from .api.samsungcast import SamsungCastTube
 from .api.samsungws import ArtModeStatus, SamsungTVAsyncRest, SamsungTVWS
 from .api.smartthings import SmartThingsCapabilityUnsupported, SmartThingsTV, STStatus
 from .api.upnp import SamsungUPnP
+from .art_mode_guard import ArtModeWriteSuppressed, guard_for
 from .const import (
     ATTR_BRIGHTNESS,
     ATTR_CATEGORY_ID,
@@ -207,6 +208,11 @@ ATTR_IP_ADDRESS = "ip_address"
 ATTR_PICTURE_MODE = "picture_mode"
 ATTR_PICTURE_MODE_LIST = "picture_mode_list"
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"
+
+
+class _SkipPowerOn(Exception):
+    """Internal: leave the power-on block without sending the power key."""
+
 
 CMD_OPEN_BROWSER = "open_browser"
 CMD_RUN_APP = "run_app"
@@ -3981,6 +3987,20 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             resolution = device.get("resolution")
         return panel_size(resolution)
 
+    async def _panel_shows_art(self) -> bool | None:
+        """getTVStates.pictureMode == "Ambient", or None when it cannot be read.
+
+        Needs only IP Control to be paired: this is a plain state getter, not
+        the artModeControl flag the art-mode option guards.
+        """
+        client = self._get_ip_control_client()
+        if client is None:
+            return None
+        try:
+            return await client.async_panel_shows_art()
+        except SamsungIPControlError:
+            return None
+
     async def _ensure_tv_awake_for_art(self) -> bool:
         """Ensure the TV is powered, WITHOUT forcing it into Art Mode.
 
@@ -4070,6 +4090,33 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             self._log.debug("Frame Art: already in Art Mode, ready")
             return True
 
+        guard = guard_for(
+            self.hass.data.setdefault(DOMAIN, {}).setdefault(self._entry_id, {})
+        )
+
+        # Panel truth before anything is written or toggled. art_mode_status
+        # is a derived reading (IP flag, WebSocket art channel, SmartThings)
+        # and every one of those sources can be stale or wedged; the panel's
+        # own pictureMode cannot. If it shows Ambient, the TV IS in Art Mode
+        # and the only wrong move is to act on the stale reading — which used
+        # to mean an artModeOn at a panel already showing art on every
+        # automation run, or a KEY_POWER that toggled it out of art and back.
+        panel = await self._panel_shows_art()
+        if panel:
+            self._log.warning(
+                "Frame Art: art_mode_status reads off but the panel shows Ambient "
+                "— the reading is stale; treating the TV as in Art Mode and NOT "
+                "writing"
+            )
+            guard.record_verified(True)
+            return True
+
+        try:
+            guard.check(True)
+        except ArtModeWriteSuppressed as ex:
+            self._log.warning("Frame Art: %s", ex)
+            return False
+
         # Prefer the reliable IP Control path to enter Art Mode when paired:
         # the explicit artModeOn command moves the panel even on TVs whose
         # WebSocket art channel is unresponsive ("zombie") or whose
@@ -4092,21 +4139,49 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
                         await ip_client.async_power_on()
                         await asyncio.sleep(3)
                 await ip_client.async_set_art_mode_on()
-                await asyncio.sleep(2)
-                self._log.debug("Frame Art: Art Mode activated via IP Control")
-                return True
             except SamsungIPControlError as ex:
                 self._log.debug(
                     "Frame Art: IP Control art-mode activation failed (%s); "
                     "falling back to WebSocket",
                     ex,
                 )
+            else:
+                # Read the panel back rather than trusting the accepted command.
+                await asyncio.sleep(2)
+                after = await self._panel_shows_art()
+                if after:
+                    guard.record_verified(True)
+                    self._log.debug("Frame Art: Art Mode activated via IP Control")
+                    return True
+                guard.record_unverified(True)
+                if after is None:
+                    self._log.debug(
+                        "Frame Art: artModeOn accepted but the panel could not be "
+                        "read back"
+                    )
+                    return True
+                self._log.warning(
+                    "Frame Art: artModeOn was accepted but the panel did not "
+                    "switch to Ambient — not retrying within the cooldown"
+                )
+                return False
 
         # Check if TV is off, turn it on if needed
         if self.state == MediaPlayerState.OFF:
             self._log.info("Frame Art: TV is off, turning it on first...")
 
             try:
+                # Never send the power key at a Frame whose art channel says
+                # art is on: on a Frame that key TOGGLES the panel out of Art
+                # Mode onto the last input. The panel read above already
+                # returned for a confirmed Ambient; this covers the case where
+                # the panel could not be read.
+                if self._ws.artmode_status == ArtModeStatus.On:
+                    self._log.debug(
+                        "Frame Art: art channel reports art on; not sending "
+                        "the power key"
+                    )
+                    raise _SkipPowerOn
                 # Try normal WebSocket turn on first
                 await self.async_turn_on()
 
@@ -4116,6 +4191,8 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
 
                 self._log.info("Frame Art: TV should now be on")
 
+            except _SkipPowerOn:
+                pass
             except Exception as ex:
                 # WebSocket failed, try SmartThings fallback
                 if (
@@ -4166,6 +4243,7 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
 
             if art_mode_status == "on":
                 self._log.debug("Frame Art: Art Mode already active")
+                guard.record_verified(True)
                 return True
 
             # Art Mode is not active, activate it
@@ -4173,14 +4251,33 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             async with asyncio.timeout(10):
                 result = await self._art_api.set_artmode(True)
 
-            if result:
-                self._log.info("Frame Art: Art Mode successfully activated")
-                # Wait a bit for Art Mode to fully activate
-                await asyncio.sleep(2)
-                return True
-            else:
+            if not result:
                 self._log.error("Frame Art: Failed to activate Art Mode")
+                guard.record_unverified(True)
                 return False
+
+            # Wait a bit, then read back rather than trust the return value —
+            # set_artmode can report success without moving the panel.
+            await asyncio.sleep(2)
+            try:
+                async with asyncio.timeout(8):
+                    confirmed = await self._art_api.get_artmode()
+            except Exception:  # noqa: BLE001 - read-back is best effort
+                confirmed = None
+            if confirmed == "on":
+                guard.record_verified(True)
+                self._log.info("Frame Art: Art Mode successfully activated")
+                return True
+            guard.record_unverified(True)
+            if confirmed is None:
+                self._log.info("Frame Art: Art Mode activated (not read back)")
+                return True
+            self._log.warning(
+                "Frame Art: set_artmode reported success but the TV still reports "
+                "art mode %s — not retrying within the cooldown",
+                confirmed,
+            )
+            return False
 
         except asyncio.TimeoutError:
             self._log.error("Frame Art: Timeout checking/activating Art Mode")
