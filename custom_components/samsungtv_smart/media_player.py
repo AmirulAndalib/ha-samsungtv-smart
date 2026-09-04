@@ -216,6 +216,18 @@ CMD_SEND_KEY = "send_key"
 CMD_SEND_TEXT = "send_text"
 
 DELAYED_SOURCE_TIMEOUT = 80
+# Timeout for the periodic power probe of a TV we ALREADY believe is off.
+# DEFAULT_TIMEOUT (6 s) is longer than SCAN_INTERVAL (5 s), so a TV that has
+# left the network cannot possibly be polled within its own interval: every
+# single poll overran, and both this integration and Home Assistant core
+# logged a warning for it (#248 measured ~5 000 lines/day per sleeping TV).
+# A probe that fails in 3 s finishes inside the interval, which removes the
+# cause rather than hiding the symptom. The generous timeout is kept for a
+# TV believed to be ON, where a slow answer is worth waiting for.
+POWER_PROBE_OFF_TIMEOUT = 3.0
+# Minimum gap between two slow-update warnings for one entity, and the
+# suppressed count is reported with the next one.
+SLOW_UPDATE_WARN_INTERVAL = 300.0
 KEYHOLD_MAX_DELAY = 5.0
 KEYPRESS_DEFAULT_DELAY = 0.5
 KEYPRESS_MAX_DELAY = 2.0
@@ -720,6 +732,10 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         # to populate art_mode_status without falling back to the device_info
         # PowerState='standby' override or the potentially-stale art_api cache.
         self._ip_control_client: SamsungIPControl | None = None
+        # Slow-update warning throttle: last warning time and how many
+        # overruns it has stood for since (#248).
+        self._slow_update_last_warn: float = 0.0
+        self._slow_update_suppressed: int = 0
         self._ip_control_token_cached: str | None = None
         # directVolumeControl is model-dependent. Some Samsung TVs support
         # absolute volume locally, including with an external HDMI/eARC audio
@@ -1663,8 +1679,13 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
 
         if self._get_device_spec("PowerState") is not None:
             self._log.debug("Checking if TV %s is on using device info", self._host)
-            # Ensure we get an updated value
-            info = await self._async_load_device_info(force=True)
+            # Ensure we get an updated value. A TV we already believe to be off
+            # gets the short probe timeout so this poll still fits inside the
+            # scan interval; one believed on keeps the full timeout.
+            probe_timeout = (
+                None if self._state == MediaPlayerState.ON else POWER_PROBE_OFF_TIMEOUT
+            )
+            info = await self._async_load_device_info(force=True, timeout=probe_timeout)
             return info is not None and info["device"]["PowerState"] == "on"
 
         result = self._ws.is_connected
@@ -2156,14 +2177,23 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         self._st_error_count = 0
 
     async def _async_load_device_info(
-        self, force: bool = False
+        self, force: bool = False, timeout: float | None = None
     ) -> dict[str, Any] | None:
-        """Try to gather infos of this TV."""
+        """Try to gather infos of this TV.
+
+        ``timeout`` overrides the REST client's own (longer) timeout for this
+        one call — see POWER_PROBE_OFF_TIMEOUT. A timeout is indistinguishable
+        from any other failure here: both mean "no answer", and both return
+        None.
+        """
         if self._device_info is not None and not force:
             return self._device_info
 
         try:
-            device_info: dict[str, Any] = await self._rest_api.async_rest_device_info()
+            request = self._rest_api.async_rest_device_info()
+            if timeout is not None:
+                request = asyncio.wait_for(request, timeout=timeout)
+            device_info: dict[str, Any] = await request
             # This payload is ~40 mostly-immutable fields (model, MAC, codec
             # support...) refetched every poll cycle, so dumping it whole each
             # time buried real events under tens of MB of noise — 21% of a 26h
@@ -2311,12 +2341,51 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         finally:
             elapsed = time.monotonic() - start_time
             if elapsed > SCAN_INTERVAL.total_seconds():
-                self._log.warning(
-                    "%s - Update took %.1fs, longer than the %.0fs scan interval",
-                    self.entity_id,
-                    elapsed,
-                    SCAN_INTERVAL.total_seconds(),
-                )
+                self._note_slow_update(elapsed)
+
+    def _note_slow_update(self, elapsed: float) -> None:
+        """Report an update that overran the scan interval, without flooding.
+
+        An update of a TV that turned out to be OFF is slow *because* the TV is
+        off — the probe has to time out before we can say so — and warning about
+        the expected consequence of a known state is noise. That case goes to
+        debug. A reachable TV that is genuinely slow still warns, but at most
+        once per SLOW_UPDATE_WARN_INTERVAL, carrying the count it stands for
+        (#248: 13 TVs produced 557 warnings in 84 minutes, 96% of them from the
+        two that were asleep).
+        """
+        if self._state != MediaPlayerState.ON:
+            self._log.debug(
+                "%s - Update took %.1fs (TV is off; the power probe has to time "
+                "out before that is known)",
+                self.entity_id,
+                elapsed,
+            )
+            return
+
+        now = time.monotonic()
+        if now - self._slow_update_last_warn < SLOW_UPDATE_WARN_INTERVAL:
+            self._slow_update_suppressed += 1
+            return
+
+        if self._slow_update_suppressed:
+            self._log.warning(
+                "%s - Update took %.1fs, longer than the %.0fs scan interval "
+                "(%d further slow updates since the last warning)",
+                self.entity_id,
+                elapsed,
+                SCAN_INTERVAL.total_seconds(),
+                self._slow_update_suppressed,
+            )
+        else:
+            self._log.warning(
+                "%s - Update took %.1fs, longer than the %.0fs scan interval",
+                self.entity_id,
+                elapsed,
+                SCAN_INTERVAL.total_seconds(),
+            )
+        self._slow_update_last_warn = now
+        self._slow_update_suppressed = 0
 
     async def _async_update(self):
         """Perform the actual state update."""
