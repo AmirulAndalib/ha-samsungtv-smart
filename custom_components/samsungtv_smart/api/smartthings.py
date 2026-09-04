@@ -1052,8 +1052,14 @@ class SmartThingsTV:
             self._log.error("Error setting sound mode: %s", err)
             raise
 
-    async def async_set_picture_mode(self, mode: str):
+    async def async_set_picture_mode(self, mode: str) -> bool | None:
         """Select picture mode using direct REST API.
+
+        Returns True when the panel was READ BACK as having applied the mode,
+        None when a send was accepted but could not be verified, and False when
+        nothing was applied (no attempt, every attempt rejected, or accepted
+        and demonstrably not applied). The caller uses this to decide whether
+        the WebSocket key is still needed — see async_select_picture_mode.
 
         Tries both capability variants: some Samsung TVs accept commands
         on custom.picturemode but not samsungvd.pictureMode, or vice versa.
@@ -1071,7 +1077,7 @@ class SmartThingsTV:
             self._log.debug(
                 "Cannot set picture mode: TV state is %s (not ON)", self._state
             )
-            return
+            return False
 
         # Resolve display name -> internal API id using the map.
         mode_id = self._picture_mode_map.get(mode, mode)
@@ -1194,9 +1200,9 @@ class SmartThingsTV:
                 # Confirmed on the panel: remember this (capability, form) so
                 # later changes go straight through (persisted across restarts).
                 self._remember_picture_mode_capability(f"{capability}|{form}")
-                return
+                return True
             if applied is None:
-                return
+                return None
             self._log.warning(
                 "setPictureMode via %s (%s form) was accepted (COMPLETED) but "
                 "the TV still reports another mode — trying the next variant",
@@ -1211,6 +1217,7 @@ class SmartThingsTV:
                 mode,
                 "; ".join(failures) or "no attempt was made",
             )
+            return False
         else:
             # All accepted-but-unapplied (or the last one unverifiable).
             # Keep the optimistic value: the select entity holds the pending
@@ -1221,6 +1228,7 @@ class SmartThingsTV:
                 "command channel likely cannot actuate this panel (see #116)",
                 mode,
             )
+            return False
 
     def _remember_picture_mode_capability(self, capability: str) -> None:
         """Memorize (and persist) the capability confirmed to actuate the panel.

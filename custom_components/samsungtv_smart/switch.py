@@ -34,10 +34,12 @@ from .api.ipcontrol import (
     SamsungIPControlAuthError,
     SamsungIPControlError,
 )
+from .art_mode_guard import ArtModeWriteSuppressed, guard_for
 from .const import (
     AUTH_METHOD_OAUTH,
     CONF_AUTH_METHOD,
     CONF_ENABLE_IP_CONTROL,
+    CONF_IP_CONTROL_ART_MODE,
     CONF_IP_CONTROL_TOKEN,
     CONF_IS_FRAME_TV,
     CONF_WS_NAME,
@@ -249,6 +251,10 @@ class FrameArtModeSwitch(SwitchEntity):
             self._ip_control_token = token
         return self._ip_control
 
+    def _ip_control_art_mode(self) -> bool:
+        """True when art mode may use IP Control at all (default: off)."""
+        return self._entry.options.get(CONF_IP_CONTROL_ART_MODE, False)
+
     async def _set_artmode(self, turn_on: bool):
         """Set Art Mode via IP Control (primary), WebSocket as fallback.
 
@@ -261,14 +267,41 @@ class FrameArtModeSwitch(SwitchEntity):
         WebSocket so behaviour is never worse than before. The caller verifies
         the resulting state afterwards.
 
-        Note: this writing path is gated only by ``CONF_ENABLE_IP_CONTROL``
-        (inside ``_get_ip_control``), NOT by ``CONF_IP_CONTROL_ART_MODE``. The
-        latter only disables the *read* path (the ``artModeControl`` getter,
-        which can wedge "on" on some firmwares). Issuing the explicit
-        ``artModeOn``/``artModeOff`` command is reliable even on those TVs, so
-        we keep using it for switching.
+        ``CONF_IP_CONTROL_ART_MODE`` gates this path, reads AND writes. It
+        used to gate only the ``artModeControl`` getter, on the reasoning that
+        the explicit artModeOn/artModeOff command stays reliable even on a TV
+        whose getter has wedged. That left the setting dishonest: our own
+        documentation tells users to disable it because the IP Control art-mode
+        path "can break Art Mode entirely and may need a factory reset (seen on
+        QE55LS03D fw 2123)", yet a user who did exactly that still had every
+        art-mode toggle sent to the TV over JSON-RPC. Whatever that firmware
+        fault really is, "off" must mean no artModeControl traffic at all —
+        switching then falls back to the WebSocket art channel, as the
+        documentation already claims it does.
         """
-        client = self._get_ip_control()
+        guard = guard_for(self._hass.data[DOMAIN][self._entry.entry_id])
+
+        # 1. Panel truth before writing. getTVStates.pictureMode is a plain
+        # getter that needs only IP Control to be paired — not the art-mode
+        # option — and it is independent of the artModeControl flag (which can
+        # wedge) and of the WebSocket art channel (which can go stale). If the
+        # panel already shows what was asked for, the request is satisfied and
+        # writing again is exactly the loop we are guarding against.
+        panel = await self._panel_shows_art()
+        if panel is turn_on:
+            self._log.warning(
+                "Art Mode %s requested for %s but the panel already shows it — "
+                "the art-mode reading was stale; not writing",
+                "ON" if turn_on else "OFF",
+                self._device_name,
+            )
+            guard.record_verified(turn_on)
+            return True
+
+        # 2. Cooldown: refuse to repeat a same-intent write that did not take.
+        guard.check(turn_on)  # raises ArtModeWriteSuppressed
+
+        client = self._get_ip_control() if self._ip_control_art_mode() else None
         if client is not None:
             try:
                 if turn_on:
@@ -280,7 +313,6 @@ class FrameArtModeSwitch(SwitchEntity):
                     turn_on,
                     self._device_name,
                 )
-                return True
             except SamsungIPControlError as ex:
                 self._log.debug(
                     "IP Control art-mode set failed (%s); falling back to "
@@ -288,7 +320,47 @@ class FrameArtModeSwitch(SwitchEntity):
                     ex,
                     self._device_name,
                 )
-        return await self._art_api.set_artmode(turn_on)
+            else:
+                # 4. Read the panel back instead of trusting the accepted
+                # command: "COMPLETED" does not move a panel.
+                await asyncio.sleep(2)
+                after = await self._panel_shows_art()
+                if after is turn_on:
+                    guard.record_verified(turn_on)
+                    return True
+                guard.record_unverified(turn_on)
+                if after is None:
+                    self._log.debug(
+                        "Art Mode %s for %s accepted via IP Control but the panel "
+                        "could not be read back",
+                        turn_on,
+                        self._device_name,
+                    )
+                    return True
+                self._log.warning(
+                    "Art Mode %s for %s was accepted via IP Control but the panel "
+                    "did not change — not retrying within the cooldown",
+                    "ON" if turn_on else "OFF",
+                    self._device_name,
+                )
+                return False
+
+        result = await self._art_api.set_artmode(turn_on)
+        if result:
+            # The WebSocket path has no panel read-back here; the caller's
+            # get_artmode() check verifies it and clears this.
+            guard.record_unverified(turn_on)
+        return result
+
+    async def _panel_shows_art(self) -> bool | None:
+        """getTVStates.pictureMode == "Ambient", or None when unreadable."""
+        client = self._get_ip_control()
+        if client is None:
+            return None
+        try:
+            return await client.async_panel_shows_art()
+        except SamsungIPControlError:
+            return None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -523,6 +595,9 @@ class FrameArtModeSwitch(SwitchEntity):
                                     " (confirmed by get_artmode)",
                                     self._device_name,
                                 )
+                                guard_for(
+                                    self._hass.data[DOMAIN][self._entry.entry_id]
+                                ).record_verified(True)
                                 self._attr_is_on = True
                                 self._available = True
                                 self.async_write_ha_state()
@@ -535,6 +610,12 @@ class FrameArtModeSwitch(SwitchEntity):
                             await asyncio.sleep(retry_delay)
                             retry_delay *= 2  # Exponential backoff
 
+            except ArtModeWriteSuppressed as ex:
+                # The same write was just made and did not take. Retrying is
+                # the loop this guard exists to stop; say so once and stop.
+                self._log.warning("Art Mode for %s: %s", self._device_name, ex)
+                self.async_write_ha_state()
+                return
             except asyncio.TimeoutError:
                 self._log.debug("Timeout on attempt %d/%d", attempt + 1, max_retries)
                 if attempt < max_retries - 1:
@@ -610,6 +691,12 @@ class FrameArtModeSwitch(SwitchEntity):
                             await asyncio.sleep(retry_delay)
                             retry_delay *= 2
 
+            except ArtModeWriteSuppressed as ex:
+                # The same write was just made and did not take. Retrying is
+                # the loop this guard exists to stop; say so once and stop.
+                self._log.warning("Art Mode for %s: %s", self._device_name, ex)
+                self.async_write_ha_state()
+                return
             except asyncio.TimeoutError:
                 self._log.debug("Timeout on attempt %d/%d", attempt + 1, max_retries)
                 if attempt < max_retries - 1:
