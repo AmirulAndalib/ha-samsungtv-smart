@@ -1191,7 +1191,9 @@ This typically appears **after a TV factory reset and re-pairing** of the IP Con
 
 **Workarounds, in order of preference:**
 
-1. **Disable Art Mode over IP Control.** Under **Reconfigure → IP Control**, turn **Enable IP Control Art Mode** off (this is the default). Art Mode detection and switching then fall back to the WebSocket / Frame Art channel, which is unaffected. Power on/off over IP Control (**Enable IP Control** / the *IP Control* power-on method) keeps working — only the Art Mode path is disabled.
+1. **Disable Art Mode over IP Control.** Under **Reconfigure → IP Control**, turn **Enable IP Control Art Mode** off (this is the default). Art Mode detection **and switching** then fall back to the WebSocket / Frame Art channel, which is unaffected, and no `artModeControl` request — read or write — is sent to the TV. Power on/off over IP Control (**Enable IP Control** / the *IP Control* power-on method) keeps working — only the Art Mode path is disabled.
+
+   > **Before 8.7.7 this was only half true.** The option disabled the `artModeControl` *getter*, but art-mode switching still sent `artModeOn`/`artModeOff` over JSON-RPC. If you disabled the option on the advice above and still saw Art Mode misbehave, that is why — update to 8.7.7 or later, where "off" means no `artModeControl` traffic at all. To stop **every** IP Control write to a TV you suspect, turn off **Enable IP Control** itself.
 2. **Factory reset the TV.** If you need IP Control for Art Mode and the flag is wedged, the only known way to clear the stuck `artModeControl` flag on the TV side is a **factory reset of the TV** (Settings → General → Reset), followed by re-pairing. There is no remote/API command that unsticks it.
 
 Once a firmware update reports `artModeControl` correctly again, you can re-enable **Enable IP Control Art Mode** under **Reconfigure → IP Control**.

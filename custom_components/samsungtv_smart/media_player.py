@@ -4059,7 +4059,16 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         # WebSocket art channel is unresponsive ("zombie") or whose
         # set_artmode times out. Power on first (returns into the last state)
         # then force Art Mode on.
-        ip_client = self._get_ip_control_client()
+        #
+        # Gated on CONF_IP_CONTROL_ART_MODE like every other art-mode use of
+        # IP Control: with that option off, no artModeControl request is sent
+        # at all, read or write. See the switch's _set_artmode for why the
+        # write path used to escape the setting, and why that was wrong.
+        ip_client = (
+            self._get_ip_control_client()
+            if self._get_option(CONF_IP_CONTROL_ART_MODE, False)
+            else None
+        )
         if ip_client is not None:
             try:
                 if self.state == MediaPlayerState.OFF:

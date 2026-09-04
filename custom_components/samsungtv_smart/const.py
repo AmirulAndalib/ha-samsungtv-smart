@@ -196,6 +196,13 @@ CONF_ENABLE_IP_CONTROL = "enable_ip_control"
 # Control (CONF_ENABLE_IP_CONTROL / CONF_POWER_ON_METHOD) is unaffected by
 # this setting. Re-enable once the TV's firmware reports artModeControl
 # correctly again.
+#
+# OFF MEANS NO artModeControl TRAFFIC AT ALL — reads and writes. Until 8.7.7
+# this gated only the getter, so a user who disabled it on our own advice (the
+# path "can break Art Mode entirely and may need a factory reset", seen on a
+# QE55LS03D) still had every art-mode toggle sent to the TV over JSON-RPC.
+# Art mode then uses the WebSocket art channel for both reading and switching,
+# which is what the documentation always said it did.
 CONF_IP_CONTROL_ART_MODE = "ip_control_art_mode"
 
 # Device identity, learned once via IP Control's getDeviceInformation right

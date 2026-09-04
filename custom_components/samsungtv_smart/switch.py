@@ -38,6 +38,7 @@ from .const import (
     AUTH_METHOD_OAUTH,
     CONF_AUTH_METHOD,
     CONF_ENABLE_IP_CONTROL,
+    CONF_IP_CONTROL_ART_MODE,
     CONF_IP_CONTROL_TOKEN,
     CONF_IS_FRAME_TV,
     CONF_WS_NAME,
@@ -249,6 +250,10 @@ class FrameArtModeSwitch(SwitchEntity):
             self._ip_control_token = token
         return self._ip_control
 
+    def _ip_control_art_mode(self) -> bool:
+        """True when art mode may use IP Control at all (default: off)."""
+        return self._entry.options.get(CONF_IP_CONTROL_ART_MODE, False)
+
     async def _set_artmode(self, turn_on: bool):
         """Set Art Mode via IP Control (primary), WebSocket as fallback.
 
@@ -261,14 +266,19 @@ class FrameArtModeSwitch(SwitchEntity):
         WebSocket so behaviour is never worse than before. The caller verifies
         the resulting state afterwards.
 
-        Note: this writing path is gated only by ``CONF_ENABLE_IP_CONTROL``
-        (inside ``_get_ip_control``), NOT by ``CONF_IP_CONTROL_ART_MODE``. The
-        latter only disables the *read* path (the ``artModeControl`` getter,
-        which can wedge "on" on some firmwares). Issuing the explicit
-        ``artModeOn``/``artModeOff`` command is reliable even on those TVs, so
-        we keep using it for switching.
+        ``CONF_IP_CONTROL_ART_MODE`` gates this path, reads AND writes. It
+        used to gate only the ``artModeControl`` getter, on the reasoning that
+        the explicit artModeOn/artModeOff command stays reliable even on a TV
+        whose getter has wedged. That left the setting dishonest: our own
+        documentation tells users to disable it because the IP Control art-mode
+        path "can break Art Mode entirely and may need a factory reset (seen on
+        QE55LS03D fw 2123)", yet a user who did exactly that still had every
+        art-mode toggle sent to the TV over JSON-RPC. Whatever that firmware
+        fault really is, "off" must mean no artModeControl traffic at all —
+        switching then falls back to the WebSocket art channel, as the
+        documentation already claims it does.
         """
-        client = self._get_ip_control()
+        client = self._get_ip_control() if self._ip_control_art_mode() else None
         if client is not None:
             try:
                 if turn_on:
