@@ -3758,22 +3758,37 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         await self._st.async_set_sound_mode(sound_mode)
 
     async def async_select_picture_mode(self, picture_mode):
-        """Select picture mode.
+        """Select picture mode: SmartThings first, WS key when it is needed.
 
-        Uses SmartThings API first, then sends a WS key command as well.
-        The WS key bypasses HDMI content protection restrictions that cause
-        the SmartThings API to return COMPLETED but the TV to show
-        "function not available".
+        The WS key exists because SmartThings can answer COMPLETED while the
+        TV shows "function not available" — HDMI content protection blocks the
+        cloud command on some inputs. It used to be sent on EVERY change, even
+        when the cloud write had been read back as applied, so one user action
+        wrote the same setting twice over two channels within a second.
+
+        It is now sent only when SmartThings did not demonstrably apply the
+        mode: no SmartThings at all, an exception, an outright failure, or a
+        send that could not be verified. A verified apply sends nothing more.
+        The ambiguous case still sends the key, so nothing that used to work
+        stops working — this only removes the provably redundant write.
         """
-        # 1. Try SmartThings API (works for native TV sources)
+        applied = False
         if self._st:
             try:
-                await self._st.async_set_picture_mode(picture_mode)
+                applied = await self._st.async_set_picture_mode(picture_mode) is True
             except Exception:
-                pass
+                applied = False
 
-        # 2. Also send WS key as fallback (bypasses HDMI restrictions, and is
-        # the only path left when the cloud refuses the command entirely).
+        if applied:
+            self._log.debug(
+                "Picture mode '%s' verified applied via SmartThings; "
+                "not sending the WS key as well",
+                picture_mode,
+            )
+            return
+
+        # SmartThings could not be confirmed to have applied it — send the key,
+        # which also covers the HDMI-restricted case above.
         mode_id = ""
         if self._st:
             mode_id = self._st.picture_mode_map.get(picture_mode, "")
@@ -3781,7 +3796,8 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         if ws_key:
             await self.async_send_command(ws_key)
             self._log.debug(
-                "Picture mode '%s' also sent via WS key %s",
+                "Picture mode '%s' sent via WS key %s (SmartThings did not "
+                "confirm it applied)",
                 picture_mode,
                 ws_key,
             )
