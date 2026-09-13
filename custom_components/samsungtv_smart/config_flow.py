@@ -59,6 +59,7 @@ from .const import (
     ATTR_DEVICE_MODEL,
     ATTR_DEVICE_NAME,
     ATTR_DEVICE_OS,
+    AUTH_METHOD_NONE,
     AUTH_METHOD_OAUTH,
     AUTH_METHOD_PAT,
     AUTH_METHOD_ST_ENTRY,
@@ -95,6 +96,7 @@ from .const import (
     CONF_SHOW_CHANNEL_NR,
     CONF_SOURCE_LIST,
     CONF_ST_ENTRY_UNIQUE_ID,
+    CONF_ST_PICTURE_MODE_CAPABILITY,
     CONF_ST_POLL_ON_INTERVAL,
     CONF_SUPPORTS_GET_BRIGHTNESS,
     CONF_SUPPORTS_GET_COLOR_TEMPERATURE,
@@ -750,6 +752,9 @@ class SamsungTVSmartOAuth2FlowHandler(
 
         method = user_input.get(CONF_AUTH_METHOD_SELECT, AUTH_METHOD_PAT)
 
+        if method == AUTH_METHOD_NONE:
+            return self._apply_local_only_and_reload()
+
         if method == AUTH_METHOD_OAUTH:
             if not await self._async_oauth_available():
                 return self.async_abort(reason="oauth_not_configured")
@@ -1133,6 +1138,35 @@ class SamsungTVSmartOAuth2FlowHandler(
         # (combining an in-flow reload with an update listener is deprecated).
         return self.async_update_and_abort(entry, data_updates=updates)
 
+    def _apply_local_only_and_reload(self) -> ConfigFlowResult:
+        """Strip every SmartThings/OAuth credential and reload local-only (#258).
+
+        A user who set the integration up with SmartThings can decide they only
+        want local WebSocket / IP Control. async_update_and_abort with
+        data_updates MERGES, so it cannot remove keys — build the full
+        replacement data without the auth keys instead. Clearing
+        CONF_OAUTH_TOKEN is the important part: has_refreshable_oauth_token()
+        keys off it, so leaving it behind makes the entry keep trying to refresh
+        a token against credentials the user has since deleted, which is exactly
+        the "expired credentials" spam #258 reports. media_player only builds a
+        SmartThings client when both the key and device id are present, so once
+        these are gone the entry runs purely locally.
+        """
+        entry = self._get_reconfigure_entry()
+        stripped = {
+            CONF_API_KEY,
+            CONF_OAUTH_TOKEN,
+            CONF_DEVICE_ID,
+            CONF_ST_ENTRY_UNIQUE_ID,
+            CONF_ST_PICTURE_MODE_CAPABILITY,
+            "auth_implementation",
+        }
+        data = {k: v for k, v in entry.data.items() if k not in stripped}
+        data[CONF_AUTH_METHOD] = AUTH_METHOD_NONE
+        # Force the reload even though the removed keys are the only change.
+        data[CONF_RECONFIGURE_GENERATION] = uuid.uuid4().hex
+        return self.async_update_and_abort(entry, data=data)
+
     @callback
     def _save_entry(self) -> ConfigFlowResult:
         """Generate new entry."""
@@ -1269,6 +1303,10 @@ class SamsungTVSmartOAuth2FlowHandler(
         auth_options[AUTH_METHOD_PAT] = "🔑 Personal Access Token (PAT)"
         if st_entries:
             auth_options[AUTH_METHOD_ST_ENTRY] = "🔗 Use SmartThings Integration"
+        # Let a user who no longer wants the cloud drop SmartThings entirely and
+        # run local WebSocket / IP Control only (#258). Picking this strips every
+        # stored credential; the PAT / ST fields below are ignored for it.
+        auth_options[AUTH_METHOD_NONE] = "🚫 No SmartThings (local only)"
 
         default_method = current_auth
         if default_method not in auth_options:

@@ -61,11 +61,13 @@ class ToleranceTest(unittest.TestCase):
         )
         self.assertLess(specific, generic)
 
-    def test_a_tolerated_refusal_does_not_raise(self):
+    def test_a_tolerated_refusal_warns_but_does_not_raise(self):
         head = self.block[: self.block.index("raise UpdateFailed")]
         self.assertIn("self._transient_read_failures += 1", head)
-        self.assertIn("<= IP_CONTROL_READ_TRANSIENT_TOLERANCE", head)
-        self.assertIn("self._log.debug(", head)
+        self.assertIn("< IP_CONTROL_READ_TRANSIENT_TOLERANCE", head)
+        # Visible at WARNING (the maintainer wanted these surfaced), but never
+        # an ERROR for a condition our own message calls "usually transient".
+        self.assertIn("self._log.warning(", head)
         self.assertNotIn("self._log.error", head)
 
     def test_it_keeps_the_previous_snapshot_when_there_is_one(self):

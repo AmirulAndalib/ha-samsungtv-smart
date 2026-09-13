@@ -2629,15 +2629,16 @@ class SmartThingsPowerConsumptionSensor(CoordinatorEntity, SensorEntity):
             return None
 
 
-# Consecutive -32002 answers tolerated on a state READ before it is reported as
-# a coordinator failure. The TV returns this for a read it momentarily refuses;
+# Consecutive -32002 answers on a state READ before it is escalated to a
+# coordinator failure. The TV returns this for a read it momentarily refuses;
 # our own message calls it "usually transient", and it is — measured as isolated
 # single occurrences a few times a day on healthy TVs, each recovering on the
-# next cycle. Raising UpdateFailed on the first one logs an ERROR for a normal
-# condition, the same mistake #248 fixed for the sleeping-TV overrun. A run of
-# them is different: that is a TV stuck in a state it will not read from, and
-# worth an ERROR.
-IP_CONTROL_READ_TRANSIENT_TOLERANCE = 3
+# next cycle. Each tolerated refusal logs at WARNING (visible, but not the ERROR
+# a normal condition does not deserve — the same mistake #248 fixed for the
+# sleeping-TV overrun); the snapshot is held so the sensors keep their values.
+# The Nth consecutive refusal is different: that is a TV stuck in a state it
+# will not read from, so it raises UpdateFailed (ERROR).
+IP_CONTROL_READ_TRANSIENT_TOLERANCE = 5
 
 
 class IPControlStateCoordinator(DataUpdateCoordinator):
@@ -2800,8 +2801,8 @@ class IPControlStateCoordinator(DataUpdateCoordinator):
             # previous snapshot instead of failing the coordinator. Only a run
             # of them means something is actually wrong.
             self._transient_read_failures += 1
-            if self._transient_read_failures <= IP_CONTROL_READ_TRANSIENT_TOLERANCE:
-                self._log.debug(
+            if self._transient_read_failures < IP_CONTROL_READ_TRANSIENT_TOLERANCE:
+                self._log.warning(
                     "IP Control state read refused (%s) — attempt %d of %d "
                     "tolerated, keeping the previous snapshot",
                     ex,
