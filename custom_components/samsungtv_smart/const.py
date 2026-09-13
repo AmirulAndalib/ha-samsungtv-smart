@@ -243,6 +243,9 @@ def ip_control_port(entry_data: Mapping[str, Any]) -> int:
 AUTH_METHOD_OAUTH = "oauth"
 AUTH_METHOD_PAT = "pat"
 AUTH_METHOD_ST_ENTRY = "st_entry"
+# No SmartThings at all — local WebSocket / IP Control only. Selecting this on
+# reconfigure strips every SmartThings/OAuth credential from the entry (#258).
+AUTH_METHOD_NONE = "none"
 
 # obsolete
 CONF_UPDATE_METHOD = "update_method"
