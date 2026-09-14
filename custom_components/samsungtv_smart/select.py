@@ -86,6 +86,26 @@ async def async_setup_entry(
     device_name = config.get(CONF_NAME) or entry.title or host
 
     if _ip_control_active(entry):
+        # A prior SmartThings-only setup registered a SamsungTVSTMediaOutputSelect
+        # (name "Speaker Select"). Once IP Control is paired that entity is no
+        # longer created, but its registry entry lingers as a dead
+        # select.<tv>_speaker_select with no live object behind it: it never
+        # updates, homeassistant.update_entity is a no-op on it, and it keeps the
+        # base entity_id, forcing the live IP speaker select onto
+        # select.<tv>_speaker_select_2 (#261). Remove the stale entry so the
+        # local speaker select is the only one and can own the base id.
+        registry = er.async_get(hass)
+        stale_id = registry.async_get_entity_id(
+            "select", DOMAIN, f"{device_unique_id}_st_media_output"
+        )
+        if stale_id:
+            registry.async_remove(stale_id)
+            _LOGGER.debug(
+                "Removed stale SmartThings speaker select %s now that IP Control "
+                "is paired for %s",
+                stale_id,
+                device_name,
+            )
         async_add_entities(
             [
                 SamsungTVIPControlColorToneSelect(
