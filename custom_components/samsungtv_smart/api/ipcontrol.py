@@ -597,10 +597,17 @@ class SamsungIPControl:
         while art is on screen. This is the signal to consult before WRITING
         art mode: it is independent of the ``artModeControl`` flag, which can
         wedge "on" on some firmware (the wedge this integration documents on a
-        QE55LS03D), and of the WebSocket art channel, which can go stale. A
-        plain getter, safe on any TV state and cheap enough to call once per
-        write.
+        QE55LS03D), and of the WebSocket art channel, which can go stale.
+
+        PowerState is checked first and wins, exactly as in
+        :meth:`async_get_art_mode`: a Frame in standby still answers
+        getTVStates with a STALE ``pictureMode`` (typically ``"Ambient"``), so
+        without this a write guard reads art-on for a dark panel and refuses to
+        wake it — the panel never comes back into art. Art Mode itself reports
+        ``powerOn``, so this only filters a genuinely powered-off TV.
         """
+        if await self.async_get_power_state() == "powerOff":
+            return None
         states = await self._async_request("getTVStates")
         mode = states.get("pictureMode")
         if not isinstance(mode, str) or not mode:
