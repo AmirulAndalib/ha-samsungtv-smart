@@ -212,6 +212,13 @@ class SamsungTVAsyncArt:
         # Circuit breaker: consecutive request timeouts on a live socket
         # (zombie art app detection — see _note_request_timeout).
         self._timeout_streak = 0
+        # Whether any request has been answered since the current connection was
+        # established. A port that (re)connects but never answers is not healthy
+        # — some 2020 Frames accept a bare ms.channel.connect on the plain-ws
+        # port (8001) while the art app never becomes ready, so every request
+        # times out. When a wedge trips with this still False, the port is a
+        # zombie and _note_request_timeout flips to the alternate one (#12).
+        self._got_response_since_connect = False
         # Suspends that breaker while an upload waits for image_added, so
         # unrelated thumbnail timeouts can't tear the socket down mid-upload.
         self._upload_in_progress = False
@@ -561,6 +568,10 @@ class SamsungTVAsyncArt:
                 self._connection_failures = 0
 
             self._connected = True
+            # New connection: nothing has answered on it yet. If a wedge trips
+            # before anything does, this port is a zombie (see
+            # _note_request_timeout) and we flip to the alternate one.
+            self._got_response_since_connect = False
 
             # Start the receive loop
             self._recv_task = asyncio.create_task(self._receive_loop())
@@ -848,8 +859,10 @@ class SamsungTVAsyncArt:
                 self._pending_requests[request_key],
                 timeout=timeout,
             )
-            # A real answer proves the art app is alive — reset the breaker.
+            # A real answer proves the art app is alive — reset the breaker and
+            # mark this connection as one the current port actually serves.
             self._timeout_streak = 0
+            self._got_response_since_connect = True
             return result
         except asyncio.TimeoutError:
             self._log.debug("Art API: Timeout waiting for '%s'", request_key)
@@ -901,6 +914,25 @@ class SamsungTVAsyncArt:
             self._timeout_streak,
         )
         self._timeout_streak = 0
+        # A connection that wedged without ever answering a single request is a
+        # zombie: on some 2020 Frames the plain-ws port (8001) accepts a bare
+        # ms.channel.connect but its art app never becomes ready, so every
+        # request times out — and because _connect_once "succeeded" there, each
+        # reconnect keeps choosing the same dead port and never retries the
+        # secure port (8002) that actually works, looping forever (#12). Flip to
+        # the alternate port before the reconnect so open() tries the good one
+        # first. A port that HAS answered is left alone (a transient wedge on a
+        # genuinely-working port must not bounce it to the other one).
+        if not self._got_response_since_connect:
+            alternate_port = 8001 if self._port == 8002 else 8002
+            self._log.warning(
+                "Art API: port %d wedged without answering any request — "
+                "switching to port %d for the reconnect",
+                self._port,
+                alternate_port,
+            )
+            self._port = alternate_port
+            self._learn_port(alternate_port)
         # Close from a task: _ws.close() makes the receive loop's `async for`
         # terminate (CLOSED), and its cleanup/auto-reconnect machinery takes
         # over — one recovery path for every kind of dead channel.
