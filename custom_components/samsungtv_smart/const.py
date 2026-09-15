@@ -274,6 +274,9 @@ RESULT_WRONG_APIKEY = "wrong_api_key"
 SERVICE_SELECT_PICTURE_MODE = "select_picture_mode"
 SERVICE_START_HUE_SYNC = "start_hue_sync"
 SERVICE_STOP_HUE_SYNC = "stop_hue_sync"
+# Tizen app id of the Philips Hue Sync TV service. samsungvd.lightControl only
+# steers an already-running session, so start_hue_sync launches this first (#266).
+HUE_SYNC_APP_ID = "com.lighting.HueSyncService"
 
 # Frame Art Extended Services
 SERVICE_ART_GET_ARTMODE = "art_get_artmode"

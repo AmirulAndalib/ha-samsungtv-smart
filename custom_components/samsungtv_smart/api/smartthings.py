@@ -992,6 +992,52 @@ class SmartThingsTV:
             self._log.error("Error selecting VD source: %s", err)
             raise
 
+    async def async_hue_sync_session_active(self) -> bool | None:
+        """Whether a Hue Sync session is currently running, or None if unknown.
+
+        samsungvd.lightControl only steers an ALREADY-running Hue Sync session:
+        while a session exists the capability reports supportedModes /
+        streamControl / selectedAppId, and while none exists it is empty and
+        setLightControlMode returns COMPLETED without doing anything (#266). So
+        this is the signal for whether setLightControlMode will have any effect.
+        Returns True when a session is running, False when the capability is
+        empty (no session), and None when it can't be read.
+        """
+        if not self._device_id or not self._session:
+            return None
+        api_key = self._get_api_key()
+        url = (
+            f"{API_DEVICES}/{self._device_id}"
+            f"/components/main/capabilities/{CAP_LIGHT_CONTROL}/status"
+        )
+        try:
+            async with self._session.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Accept": "application/json",
+                },
+            ) as resp:
+                if resp.status != 200:
+                    self._log.debug(
+                        "Could not read %s status (HTTP %s)",
+                        CAP_LIGHT_CONTROL,
+                        resp.status,
+                    )
+                    return None
+                data = await resp.json()
+        except Exception as err:  # noqa: BLE001 - best-effort probe
+            self._log.debug("Could not read %s status: %s", CAP_LIGHT_CONTROL, err)
+            return None
+
+        if data.get("supportedModes", {}).get("value"):
+            return True
+        if data.get("streamControl", {}).get("value"):
+            return True
+        if data.get("selectedAppId", {}).get("value"):
+            return True
+        return False
+
     async def async_set_hue_sync(self, enabled: bool) -> None:
         """Start or stop Philips Hue Sync without opening the TV app."""
         mode = HUE_SYNC_MODE_ON if enabled else HUE_SYNC_MODE_OFF
