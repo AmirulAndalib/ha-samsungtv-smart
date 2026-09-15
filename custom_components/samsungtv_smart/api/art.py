@@ -774,8 +774,16 @@ class SamsungTVAsyncArt:
 
         sub_event = data.get("event", "")
 
-        # Update art mode status from events
-        if "artmode_status" in sub_event:
+        # Update art mode status from events. Exclude set_artmode_status: it is
+        # the reply to our OWN write, carrying 'status' (not 'value'), so reading
+        # it here made data.get("value") None and forced art_mode False whatever
+        # it reported. On some 2024 Frames (QA65LS03D) that reply trails the
+        # authoritative art_mode_changed broadcast by up to ~13 s, so it
+        # overwrote a correct "on" with False and — with no IP Control or
+        # SmartThings to re-read — the switch and sensor stuck at off (#264). The
+        # get_artmode_status status report (which does carry 'value') still
+        # matches here; the write's reply is still resolved by request_id below.
+        if "artmode_status" in sub_event and sub_event != "set_artmode_status":
             self.art_mode = data.get("value") == "on"
         elif sub_event == "art_mode_changed":
             self.art_mode = data.get("status") == "on"
