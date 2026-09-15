@@ -149,6 +149,7 @@ from .const import (
     DEFAULT_ST_POLL_ON_INTERVAL,
     DEFAULT_TIMEOUT,
     DOMAIN,
+    HUE_SYNC_APP_ID,
     LOCAL_LOGO_PATH,
     MAX_WOL_REPEAT,
     SERVICE_ART_AVAILABLE,
@@ -3858,10 +3859,52 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
                 mode_id or "unknown",
             )
 
+    async def _async_launch_hue_sync_app(self) -> None:
+        """Launch the Hue Sync TV app and wait for its session to come up.
+
+        samsungvd.lightControl only steers an already-running session (#266), so
+        this is what makes start_hue_sync work when the app is not running.
+        """
+        try:
+            await self._rest_api.async_rest_app_run(HUE_SYNC_APP_ID)
+        except Exception as err:  # noqa: BLE001 - surfaced as a clear HA error
+            raise HomeAssistantError(
+                "Could not launch the Philips Hue Sync app on the TV "
+                f"({HUE_SYNC_APP_ID}): {err}. Make sure it is installed."
+            ) from err
+        # Give the TV a few seconds to establish the session before setting the
+        # mode; poll the capability rather than sleeping a fixed long time.
+        for _ in range(8):
+            await asyncio.sleep(1.5)
+            if await self._st.async_hue_sync_session_active():
+                return
+        raise HomeAssistantError(
+            "Launched the Philips Hue Sync app but no sync session came up in "
+            "time. Open the app on the TV once and confirm it is paired with your "
+            "Hue bridge, then try again."
+        )
+
     async def _async_set_hue_sync(self, enabled: bool) -> None:
         """Start or stop Hue Sync, turning a missing capability into a clear error."""
         if not self._st:
             raise HomeAssistantError("SmartThings is not configured for this TV")
+
+        # samsungvd.lightControl only controls a running Hue Sync session; with no
+        # session, setLightControlMode returns COMPLETED and does nothing (#266).
+        # active: True = running, False = no session, None = couldn't read it.
+        active = await self._st.async_hue_sync_session_active()
+        if enabled:
+            if active is False:
+                # Restore start-from-HA that Samsung broke ~2026-09 by launching
+                # the app first (it no longer persists the session on its own).
+                await self._async_launch_hue_sync_app()
+        elif active is False:
+            # Nothing to stop — say so instead of a green check that did nothing.
+            raise HomeAssistantError(
+                "Hue Sync is not currently running on this TV, so there is "
+                "nothing to stop."
+            )
+
         try:
             await self._st.async_set_hue_sync(enabled)
         except SmartThingsCapabilityUnsupported as err:
