@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from contextlib import suppress
+from datetime import datetime
 import io
 import json
 import logging
@@ -24,10 +26,8 @@ import os
 import random
 import ssl
 import time
-import uuid
-from contextlib import suppress
-from datetime import datetime
 from typing import Any
+import uuid
 
 import aiohttp
 
