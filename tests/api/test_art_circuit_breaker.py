@@ -37,9 +37,11 @@ async def test_breaker_trips_after_consecutive_timeouts(art_client):
         await _timeout_once(art_client)
     # The force-close runs in a task — let it execute.
     await asyncio.sleep(0)
+    await asyncio.sleep(0)
 
     assert ws.close_calls == 1
     assert art_client._timeout_streak == 0  # reset after tripping
+    assert art_client._request_cooldown_until > 0
 
 
 async def test_success_resets_streak(art_client):
@@ -80,3 +82,63 @@ async def test_no_trip_when_already_disconnected(art_client):
     # Nothing to close, no crash; the streak reset at the threshold (the
     # timeout right after it legitimately starts a fresh count at 1).
     assert art_client._timeout_streak < art.ART_WS_TIMEOUT_TRIP
+
+
+async def test_art_requests_are_serialized(art_client, monkeypatch):
+    """Shared HA entities must never issue overlapping Art requests."""
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    active = 0
+    max_active = 0
+
+    async def fake_send(_request, _wait_for_event, _timeout):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        first_started.set()
+        await release_first.wait()
+        active -= 1
+        return {"ok": True}
+
+    monkeypatch.setattr(art_client, "_send_art_request_locked", fake_send)
+    first = asyncio.create_task(art_client._send_art_request({"request": "one"}))
+    await first_started.wait()
+    second = asyncio.create_task(art_client._send_art_request({"request": "two"}))
+    await asyncio.sleep(0)
+
+    assert max_active == 1
+    release_first.set()
+    assert await first == {"ok": True}
+    assert await second == {"ok": True}
+    assert max_active == 1
+
+
+async def test_recovery_cooldown_drops_requests(art_client, monkeypatch):
+    """Pollers must not refill the dying socket while it reconnects."""
+    import art
+
+    called = False
+
+    async def fake_send(_request, _wait_for_event, _timeout):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(art_client, "_send_art_request_locked", fake_send)
+    art_client._request_cooldown_until = (
+        asyncio.get_running_loop().time() + art.ART_WS_RECOVERY_COOLDOWN
+    )
+
+    assert await art_client._send_art_request({"request": "poll"}) is None
+    assert called is False
+
+
+async def test_websocket_close_is_strictly_bounded(art_client, monkeypatch):
+    """A half-open Samsung transport must not hang HA shutdown."""
+    import art
+
+    class _NeverClosingWS:
+        async def close(self):
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(art, "ART_WS_CLOSE_TIMEOUT", 0.01)
+    assert await art_client._close_ws_bounded(_NeverClosingWS()) is False

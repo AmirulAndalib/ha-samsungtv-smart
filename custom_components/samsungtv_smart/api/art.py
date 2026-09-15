@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from datetime import datetime
 import io
 import json
 import logging
@@ -25,8 +24,10 @@ import os
 import random
 import ssl
 import time
-from typing import Any
 import uuid
+from contextlib import suppress
+from datetime import datetime
+from typing import Any
 
 import aiohttp
 
@@ -109,6 +110,17 @@ _UPLOAD_CHUNK_SIZE = 512 * 1024
 # the WS open and answering PINGs — heartbeat can't catch that) and the socket
 # is force-closed to hand recovery to the auto-reconnect path (issue #153).
 ART_WS_TIMEOUT_TRIP = 3
+
+# Once the circuit breaker trips, suppress new requests long enough for the
+# forced close and backed-off reconnect to settle.  Without this gate, the
+# media player, sensor, number and select platforms can immediately enqueue a
+# fresh burst against the same dying socket.
+ART_WS_RECOVERY_COOLDOWN = 30.0
+
+# Samsung firmware can leave a WebSocket transport half-open indefinitely.
+# Integration unload (and therefore Home Assistant shutdown/restart) must not
+# wait forever for aiohttp's close handshake.
+ART_WS_CLOSE_TIMEOUT = 2.0
 
 # Art-app error codes returned in {"event": "error", "error_code": N} replies,
 # per the decompiled firmware (notes/QN55LS03FAFXZA/ART_MODE_DECOMPILED.md).
@@ -203,6 +215,7 @@ class SamsungTVAsyncArt:
         # races against a reconnect that could re-open the socket behind us.
         self._keepalive_task: asyncio.Task | None = None
         self._reconnect_task: asyncio.Task | None = None
+        self._force_close_task: asyncio.Task | None = None
 
         # Connection failure tracking for exponential backoff (v6.3.5)
         self._connection_failures = 0
@@ -222,6 +235,13 @@ class SamsungTVAsyncArt:
         # Suspends that breaker while an upload waits for image_added, so
         # unrelated thumbnail timeouts can't tear the socket down mid-upload.
         self._upload_in_progress = False
+
+        # The TV's Art app is effectively a single-request protocol.  Several
+        # HA platforms share this client and otherwise poll it concurrently,
+        # overwriting event-keyed pending requests and amplifying a slow TV
+        # into a reconnect storm.
+        self._request_lock = asyncio.Lock()
+        self._request_cooldown_until = 0.0
 
         # Connection lock to prevent concurrent connection attempts (v6.3.5)
         self._connection_lock = asyncio.Lock()
@@ -600,24 +620,24 @@ class SamsungTVAsyncArt:
             self._reconnect_task.cancel()
         self._reconnect_task = None
 
+        if self._force_close_task and not self._force_close_task.done():
+            self._force_close_task.cancel()
+        self._force_close_task = None
+
         if self._keepalive_task:
             self._keepalive_task.cancel()
-            try:
+            with suppress(asyncio.CancelledError):
                 await self._keepalive_task
-            except asyncio.CancelledError:
-                pass
             self._keepalive_task = None
 
         if self._recv_task:
             self._recv_task.cancel()
-            try:
+            with suppress(asyncio.CancelledError):
                 await self._recv_task
-            except asyncio.CancelledError:
-                pass
             self._recv_task = None
 
         if self._ws and not self._ws.closed:
-            await self._ws.close()
+            await self._close_ws_bounded(self._ws)
         self._ws = None
 
         # Cancel all pending requests
@@ -922,6 +942,10 @@ class SamsungTVAsyncArt:
             self._timeout_streak,
         )
         self._timeout_streak = 0
+        self._request_cooldown_until = max(
+            self._request_cooldown_until,
+            time.monotonic() + ART_WS_RECOVERY_COOLDOWN,
+        )
         # A connection that wedged without ever answering a single request is a
         # zombie: on some 2020 Frames the plain-ws port (8001) accepts a bare
         # ms.channel.connect but its art app never becomes ready, so every
@@ -944,17 +968,61 @@ class SamsungTVAsyncArt:
         # Close from a task: _ws.close() makes the receive loop's `async for`
         # terminate (CLOSED), and its cleanup/auto-reconnect machinery takes
         # over — one recovery path for every kind of dead channel.
-        asyncio.create_task(self._force_close_ws())
+        if self._force_close_task is None or self._force_close_task.done():
+            self._force_close_task = asyncio.create_task(self._force_close_ws())
 
     async def _force_close_ws(self) -> None:
         """Close the current WS to trigger the receive-loop recovery path."""
         ws = self._ws
         if ws is None or ws.closed:
             return
+        closed = await self._close_ws_bounded(ws)
+        if closed:
+            return
+
+        # A transport that ignores close would otherwise leave _receive_loop
+        # alive forever and block both recovery and integration unload.  Detach
+        # it and start the same bounded reconnect path the receive loop would
+        # normally schedule after observing CLOSED.
+        if self._ws is ws:
+            self._connected = False
+            self._ws = None
+            recv_task = self._recv_task
+            self._recv_task = None
+            if recv_task and recv_task is not asyncio.current_task():
+                recv_task.cancel()
+            if self._reconnect_task is None or self._reconnect_task.done():
+                self._reconnect_task = asyncio.create_task(
+                    self._reconnect_with_backoff()
+                )
+
+    async def _close_ws_bounded(self, ws: aiohttp.ClientWebSocketResponse) -> bool:
+        """Close a WebSocket without ever blocking HA shutdown indefinitely."""
+        close_task = asyncio.create_task(ws.close())
+        done, _pending = await asyncio.wait({close_task}, timeout=ART_WS_CLOSE_TIMEOUT)
+        if close_task not in done:
+            close_task.cancel()
+
+            # Do not await a cancellation-resistant transport.  Consume the
+            # eventual result so a late exception cannot become an unhandled
+            # task warning.
+            def _consume_result(task: asyncio.Task) -> None:
+                with suppress(BaseException):
+                    task.result()
+
+            close_task.add_done_callback(_consume_result)
+            self._log.warning(
+                "Art API: WebSocket close did not finish within %.1fs; "
+                "detaching the stale transport",
+                ART_WS_CLOSE_TIMEOUT,
+            )
+            return False
         try:
-            await ws.close()
-        except Exception as ex:  # noqa: BLE001 - best effort; loop will notice
-            self._log.debug("Art API: force-close failed: %s", ex)
+            close_task.result()
+        except Exception as ex:  # noqa: BLE001 - best effort; caller recovers
+            self._log.debug("Art API: WebSocket close failed: %s", ex)
+            return False
+        return True
 
     async def _send_art_request(
         self,
@@ -962,7 +1030,26 @@ class SamsungTVAsyncArt:
         wait_for_event: str | None = None,
         timeout: float = 5.0,
     ) -> dict[str, Any] | None:
-        """Send an art API request and wait for response."""
+        """Serialize Art requests and suppress bursts during socket recovery."""
+        async with self._request_lock:
+            cooldown_remaining = self._request_cooldown_until - time.monotonic()
+            if cooldown_remaining > 0:
+                self._log.debug(
+                    "Art API: recovery cooldown active; skipping request for %.1fs",
+                    cooldown_remaining,
+                )
+                return None
+            return await self._send_art_request_locked(
+                request_data, wait_for_event, timeout
+            )
+
+    async def _send_art_request_locked(
+        self,
+        request_data: dict[str, Any],
+        wait_for_event: str | None,
+        timeout: float,
+    ) -> dict[str, Any] | None:
+        """Send one request while the per-TV request lock is held."""
         # Ensure connected - also reconnect if WebSocket was closed by TV
         if not self._connected or not self._ws or self._ws.closed:
             if self._ws and self._ws.closed:
