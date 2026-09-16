@@ -1351,6 +1351,14 @@ _NO_RELOAD_DATA_KEYS = (
     # CONF_RECONFIGURE_GENERATION, which is NOT excluded here.
     CONF_TOKEN,
     CONF_OAUTH_TOKEN,
+    # OAuth (and ST-integration) entries rewrite CONF_API_KEY with the fresh
+    # access token on every ~24h refresh — the token doubles as the api_key.
+    # That is a runtime rotation, not a credential change, so it must not reload
+    # (before this it reloaded both shared entries on every refresh, tearing
+    # down the WS control connection — the likely trigger for the Frame's
+    # on-screen re-auth prompt). A genuine key change goes through the config/
+    # reconfigure flow, which reloads via CONF_RECONFIGURE_GENERATION.
+    CONF_API_KEY,
     CONF_PORT,
     CONF_REST_PORT,
     CONF_SUPPORTS_GET_BRIGHTNESS,

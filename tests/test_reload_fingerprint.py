@@ -92,13 +92,19 @@ class ExclusionSetTest(unittest.TestCase):
             "CONF_IP_CONTROL_MODEL_ID",
             "CONF_IP_CONTROL_FW_VERSION",
             "CONF_ST_PICTURE_MODE_CAPABILITY",
+            # OAuth/ST entries rewrite the access token into api_key on every
+            # refresh; that rotation must not reload the entry (192.168.1.31).
+            "CONF_API_KEY",
         ):
             self.assertIn(_resolve(name), excluded, name)
 
     def test_identity_and_connection_settings_still_reload(self):
         excluded = _excluded_values()
-        # Changing these must still tear down and rebuild the clients.
-        for value in ("host", "device_id", "api_key"):
+        # Changing these must still tear down and rebuild the clients. api_key is
+        # NOT here: a real key change goes through reconfigure, which reloads via
+        # the nonce, while a runtime OAuth/ST token refresh rewrites api_key and
+        # must not reload (192.168.1.31).
+        for value in ("host", "device_id"):
             self.assertNotIn(value, excluded, value)
 
     def test_the_reconfigure_nonce_is_not_excluded(self):
@@ -129,6 +135,13 @@ class FingerprintBehaviourTest(unittest.TestCase):
     def test_an_oauth_refresh_does_not_change_the_fingerprint(self):
         before = {const.CONF_OAUTH_TOKEN: {"access_token": "a"}}
         after = {const.CONF_OAUTH_TOKEN: {"access_token": "b"}}
+        self.assertEqual(self._fingerprint(before), self._fingerprint(after))
+
+    def test_an_api_key_token_rewrite_does_not_change_the_fingerprint(self):
+        # The OAuth refresh writes the new access token into api_key too (192.168.1.31).
+        api_key = _resolve("CONF_API_KEY")
+        before = {"host": "1.2.3.4", api_key: "old-access-token"}
+        after = {"host": "1.2.3.4", api_key: "new-access-token"}
         self.assertEqual(self._fingerprint(before), self._fingerprint(after))
 
     def test_a_host_change_does_change_the_fingerprint(self):
