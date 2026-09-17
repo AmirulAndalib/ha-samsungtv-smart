@@ -54,6 +54,7 @@ you can tune.
 - [Automations & Tips](#automations--tips)
 - [Troubleshooting](#troubleshooting)
   - [Integration not appearing in Add Integration](#integration-not-appearing-in-add-integration)
+  - [Art Mode won't turn on from standby (some 2020 Frames)](#art-mode-wont-turn-on-from-standby-some-2020-frames)
   - [SmartThings stops working: "Forbidden"](#smartthings-stops-working-forbidden-in-the-log)
   - [Picture mode does not change the TV at all](#picture-mode-does-not-change-the-tv-at-all)
   - [IP Control reports Art Mode "on" when it isn't](#ip-control-reports-art-mode-on-when-it-isnt)
@@ -1018,6 +1019,41 @@ Mitigations built into this fork:
 - Proper handling of invalid WebSocket close opcodes
 - Active connection cleanup to prevent zombie connections
 - Use the **nightly reload automation** above as a preventive measure.
+
+### Art Mode won't turn on from standby (some 2020 Frames)
+
+Symptom: an automation (or the Art Mode switch) tries to turn a Frame on from
+standby and it never wakes — the log repeats, once per attempt:
+
+```
+[switch] TV is off, turning it on first...
+[api.samsungws] Sending key KEY_POWER
+[api.samsungws] {'event': 'ms.channel.unauthorized'}
+[switch] Cannot activate Art Mode on <name>: TV is not reachable
+```
+
+…yet Art Mode works fine once the TV is **already on** (it activates over IP
+Control).
+
+Cause: on some ~2020 Frames the **remote-control WebSocket channel cannot
+authorize at all** — the TV rejects the token on both the plain `8001` and the
+secure `8002` channel (the firmware never brings up the `8002` TLS vhost). The
+`KEY_POWER` wake key travels on that channel, so it can never wake these sets,
+and a re-pair does not help — there is simply no working secure remote channel
+to hold a token. This is model/firmware-side, not the integration.
+
+What to do:
+- Set **Configure → Power on method** to **SmartThings** (most reliable for a
+  Frame that leaves the network in standby; **Wake-on-LAN** also works if the
+  magic packet reaches the TV). These wake paths do **not** need the remote
+  WebSocket token.
+- From 8.8.16 the integration detects this "remote channel can't authorize"
+  state and **skips the futile `KEY_POWER` and uses the configured wake method
+  directly** (before, `KEY_POWER` reported "sent" even when the TV ignored it,
+  so the wake method was never reached). Normal TVs are unaffected.
+
+Once the TV is awake, Art Mode activation itself uses IP Control and works
+normally.
 
 ### Recurring "IP Control state read failed" / "Host is unreachable" errors
 
