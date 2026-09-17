@@ -3071,7 +3071,21 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             return False
 
         result = True
-        if not await self.async_send_command(cmd_power_on):
+        # A WS KEY_POWER only wakes the TV when the remote-control channel can
+        # authorize. On some ~2020 Frames it never can — the TV rejects the token
+        # on both 8001 and the secure 8002 channel (see samsungws
+        # _bump_auth_failure), which trips auth_blocked. KEY_POWER then still
+        # reports "sent" (the frame is written) while the TV ignores it with
+        # ms.channel.unauthorized, so the set never wakes and the configured
+        # wake method below was never reached (measured on Frame chambre
+        # 192.168.1.31: art-mode-from-off looped every 20 min, "TV is not
+        # reachable"). When the channel is auth-blocked, skip the futile key and
+        # go straight to the wake method (WOL/SmartThings/IP), none of which need
+        # the remote token.
+        key_power_sent = False
+        if not self._ws.auth_blocked:
+            key_power_sent = await self.async_send_command(cmd_power_on)
+        if not key_power_sent:
             turn_on_method = PowerOnMethod(
                 self._get_option(CONF_POWER_ON_METHOD, PowerOnMethod.WOL.value)
             )
