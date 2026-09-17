@@ -553,7 +553,15 @@ class SamsungTVAsyncArt:
                         self._log.debug("Art API: Connection event: %s", event)
 
                         if event == MS_CHANNEL_READY_EVENT:
-                            # Perfect! Got ready event
+                            # Perfect! Got ready event. The channel is genuinely
+                            # healthy again, so lift any recovery cooldown now
+                            # instead of leaving pollers idle for the rest of the
+                            # 30s window: on a TV that drops the client on a
+                            # schedule (a ~200-240s clientDisconnect cadence was
+                            # measured on a 2020 Frame), the reconnect + ready
+                            # can land ~7s after the wedge, and the fixed cooldown
+                            # then wasted ~23s of an already-working socket.
+                            self._request_cooldown_until = 0.0
                             connected = True
                             break
                         elif event == MS_CHANNEL_CONNECT_EVENT:
