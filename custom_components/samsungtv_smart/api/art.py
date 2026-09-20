@@ -117,6 +117,12 @@ ART_WS_TIMEOUT_TRIP = 3
 # fresh burst against the same dying socket.
 ART_WS_RECOVERY_COOLDOWN = 30.0
 
+# How many times the recovery cooldown may double while the channel keeps
+# wedging without ever answering a request: 30s, 60s, 120s, 240s. Caps the
+# retry rate on a TV that accepts the socket and then kills it on a schedule,
+# instead of re-arming into the same failure every cycle (#273).
+ART_WS_RECOVERY_BACKOFF_MAX_DOUBLINGS = 3
+
 # Samsung firmware can leave a WebSocket transport half-open indefinitely.
 # Integration unload (and therefore Home Assistant shutdown/restart) must not
 # wait forever for aiohttp's close handshake.
@@ -242,6 +248,13 @@ class SamsungTVAsyncArt:
         # into a reconnect storm.
         self._request_lock = asyncio.Lock()
         self._request_cooldown_until = 0.0
+        # Consecutive wedges on connections that never answered anything. Each
+        # one doubles the recovery cooldown, so a channel the TV keeps killing
+        # is retried further and further apart instead of every cycle. Reset as
+        # soon as a request is actually answered (#273: lifting the cooldown on
+        # ms.channel.ready alone removed all spacing and took the wedge count
+        # from 5 to 94 in a comparable window).
+        self._unproductive_cycles = 0
 
         # Connection lock to prevent concurrent connection attempts (v6.3.5)
         self._connection_lock = asyncio.Lock()
@@ -553,15 +566,24 @@ class SamsungTVAsyncArt:
                         self._log.debug("Art API: Connection event: %s", event)
 
                         if event == MS_CHANNEL_READY_EVENT:
-                            # Perfect! Got ready event. The channel is genuinely
-                            # healthy again, so lift any recovery cooldown now
-                            # instead of leaving pollers idle for the rest of the
-                            # 30s window: on a TV that drops the client on a
-                            # schedule (a ~200-240s clientDisconnect cadence was
-                            # measured on a 2020 Frame), the reconnect + ready
-                            # can land ~7s after the wedge, and the fixed cooldown
-                            # then wasted ~23s of an already-working socket.
-                            self._request_cooldown_until = 0.0
+                            # Got ready. On a channel that has been answering,
+                            # lift the recovery cooldown now instead of leaving
+                            # pollers idle for the rest of the 30s window: on a
+                            # TV that drops the client on a schedule (a
+                            # ~200-240s clientDisconnect cadence was measured on
+                            # a 2020 Frame), reconnect + ready can land ~7s after
+                            # the wedge and the fixed cooldown wasted ~23s of an
+                            # already-working socket.
+                            #
+                            # But ready alone does NOT prove the app will serve
+                            # requests: on a channel wedging without ever
+                            # answering, lifting here re-armed straight back into
+                            # the failure and removed all spacing (#273: 5 -> 94
+                            # wedges). While unproductive cycles are being
+                            # counted, keep the backed-off cooldown and let it
+                            # expire on its own.
+                            if self._unproductive_cycles == 0:
+                                self._request_cooldown_until = 0.0
                             connected = True
                             break
                         elif event == MS_CHANNEL_CONNECT_EVENT:
@@ -896,9 +918,12 @@ class SamsungTVAsyncArt:
                 timeout=timeout,
             )
             # A real answer proves the art app is alive — reset the breaker and
-            # mark this connection as one the current port actually serves.
+            # mark this connection as one the current port actually serves. It
+            # also ends any recovery backoff: the escalation only exists for
+            # cycles that never got an answer (#273).
             self._timeout_streak = 0
             self._got_response_since_connect = True
+            self._unproductive_cycles = 0
             return result
         except asyncio.TimeoutError:
             self._log.debug("Art API: Timeout waiting for '%s'", request_key)
@@ -950,9 +975,20 @@ class SamsungTVAsyncArt:
             self._timeout_streak,
         )
         self._timeout_streak = 0
+        # A connection that answered at least once was genuinely working, so its
+        # wedge is a fresh fault and gets the base cooldown. One that never
+        # answered is an unproductive cycle: double the cooldown each time so a
+        # channel the TV keeps killing is retried further apart (#273).
+        if self._got_response_since_connect:
+            self._unproductive_cycles = 0
+        else:
+            self._unproductive_cycles = min(
+                self._unproductive_cycles + 1, ART_WS_RECOVERY_BACKOFF_MAX_DOUBLINGS
+            )
+        cooldown = ART_WS_RECOVERY_COOLDOWN * (2**self._unproductive_cycles)
         self._request_cooldown_until = max(
             self._request_cooldown_until,
-            time.monotonic() + ART_WS_RECOVERY_COOLDOWN,
+            time.monotonic() + cooldown,
         )
         # A connection that wedged without ever answering a single request is a
         # zombie: on some 2020 Frames the plain-ws port (8001) accepts a bare
