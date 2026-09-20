@@ -108,8 +108,10 @@ class ArtModeIsOnTest(unittest.TestCase):
         self.assertIn("self.support_art_mode != ArtModeSupport.UNSUPPORTED", guard)
 
     def test_the_running_app_guard_still_leads(self):
-        # A real foreground app must still win over any art signal.
-        guard = self.block.index("self._running_app not in (None, DEFAULT_APP)")
+        # A real foreground app must still win over any art signal. Matched on
+        # the attribute rather than the full expression: the guard is now also
+        # gated on the TV being ON (#273), so black wraps it across lines.
+        guard = self.block.index("self._running_app not in (")
         panel = self.block.index("panel_art = self._ip_control_panel_art_cached()")
         self.assertLess(guard, panel)
 

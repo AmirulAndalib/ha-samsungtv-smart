@@ -2818,7 +2818,21 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         # normal app use. self._running_app is driven by the app's visibility
         # flag, so it is DEFAULT_APP whenever no app is foreground (live TV or
         # Art Mode) and the app id only while that app is genuinely visible.
-        if self._running_app not in (None, DEFAULT_APP):
+        # Only while the TV is ON: _get_running_app() — the sole writer that
+        # resets this back to DEFAULT_APP — runs exclusively under
+        # `state == MediaPlayerState.ON`, and a Frame in Art Mode reports state
+        # OFF. So once the panel settles into art, _running_app can no longer be
+        # refreshed and keeps whatever it held. A brief power cycle that catches
+        # an app in the foreground on the way up therefore latched this veto and
+        # pinned art_mode_status to off for as long as the TV stayed in art
+        # (#273: measured 13.2 h across ~160 polls, silent, panel showing art the
+        # whole time — the veto fires before the panel truth below can be
+        # consulted). Gating on ON keeps the 2024-Frame fix intact, since a
+        # genuinely visible foreground app only happens while the TV is on.
+        if self._state == MediaPlayerState.ON and self._running_app not in (
+            None,
+            DEFAULT_APP,
+        ):
             return False
         if self._ip_art_mode is not None:
             return self._ip_art_mode
