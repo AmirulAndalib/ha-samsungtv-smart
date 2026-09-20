@@ -255,6 +255,14 @@ class SamsungTVAsyncArt:
         # ms.channel.ready alone removed all spacing and took the wedge count
         # from 5 to 94 in a comparable window).
         self._unproductive_cycles = 0
+        # True once the current port has actually answered a request. The art
+        # port is a property of the TV/firmware, so it is discovered at connect
+        # time (open() falls back to the alternate port when the connection
+        # fails) and then treated as settled: a proven port is never swapped at
+        # runtime on a wedge, and only a proven port is persisted (#273
+        # follow-up — a runtime swap on transient Wi-Fi loss ping-ponged and
+        # rewrote the stored port each time).
+        self._proven_port: int | None = None
 
         # Connection lock to prevent concurrent connection attempts (v6.3.5)
         self._connection_lock = asyncio.Lock()
@@ -924,6 +932,12 @@ class SamsungTVAsyncArt:
             self._timeout_streak = 0
             self._got_response_since_connect = True
             self._unproductive_cycles = 0
+            # First real answer on this port proves it: settle it and persist
+            # it. Persisting here rather than on a speculative switch means the
+            # stored port only ever records a port the TV actually served.
+            if self._proven_port != self._port:
+                self._proven_port = self._port
+                self._learn_port(self._port)
             return result
         except asyncio.TimeoutError:
             self._log.debug("Art API: Timeout waiting for '%s'", request_key)
@@ -999,16 +1013,32 @@ class SamsungTVAsyncArt:
         # the alternate port before the reconnect so open() tries the good one
         # first. A port that HAS answered is left alone (a transient wedge on a
         # genuinely-working port must not bounce it to the other one).
-        if not self._got_response_since_connect:
+        if not self._got_response_since_connect and self._proven_port != self._port:
             alternate_port = 8001 if self._port == 8002 else 8002
             self._log.warning(
-                "Art API: port %d wedged without answering any request — "
-                "switching to port %d for the reconnect",
+                "Art API: port %d has never answered a request — trying port %d "
+                "for the reconnect",
                 self._port,
                 alternate_port,
             )
+            # Not persisted: only a port that actually answers is learned (see
+            # _wait_for_response). A speculative switch must not rewrite the
+            # stored port.
             self._port = alternate_port
-            self._learn_port(alternate_port)
+        elif not self._got_response_since_connect:
+            # The port is known good — it has served this TV before. A wedge
+            # with no answer here means the TV or the network is away (a Wi-Fi
+            # Frame dropping off, a set powering down), not a wrong port, and
+            # both ports look equally dead in that state. Switching would just
+            # ping-pong: 55 flips each way were measured in one window on a
+            # Wi-Fi Frame, each one also rewriting the stored port (#273
+            # follow-up). Say so and let the backoff above space the retries.
+            self._log.warning(
+                "Art API: port %d unresponsive (the TV or network is likely "
+                "away); keeping the port and backing off for %.0fs",
+                self._port,
+                cooldown,
+            )
         # Close from a task: _ws.close() makes the receive loop's `async for`
         # terminate (CLOSED), and its cleanup/auto-reconnect machinery takes
         # over — one recovery path for every kind of dead channel.

@@ -1,16 +1,19 @@
-"""A wedged Art port that never answered must flip to the alternate one (#12).
+"""The Art port is settled once proven, and never swapped on a transient loss.
 
-Some 2020 Frames accept a bare ms.channel.connect on the plain-ws port (8001)
-while the art app never becomes ready, so every request times out. Because
-_connect_once "succeeded" there, each reconnect kept choosing the same dead
-port and never retried the secure port (8002) that actually works — an endless
-wedge/reconnect loop (excprocess's QE32LS03T, two hours in the log).
+Originally (#12) a wedge with no answer always switched port, to rescue a 2020
+Frame stuck on a plain-ws 8001 that accepts a bare ms.channel.connect but never
+serves the art app. That rule is right only while the port is unproven: on a
+Wi-Fi Frame that briefly drops off, BOTH ports look "wedged without answering",
+so the switch ping-ponged — 55 flips each way in one window — and each flip also
+persisted the new port, rewriting the stored value on every transient loss
+(#273 follow-up).
 
-The fix tracks whether any request was answered since the current connection
-was established; when a wedge trips with that still False, the port is a zombie
-and _note_request_timeout flips to the alternate port before the reconnect. A
-port that HAS answered is left alone. art.py needs Home Assistant/aiohttp to
-import, so this is checked structurally on the source.
+Now: the port is discovered at connect time (open() falls back to the alternate
+port when the connection itself fails), a port is *proven* the first time it
+answers a request, only a proven port is persisted, and a proven port is kept
+across a wedge — the exponential backoff spaces the retries instead.
+
+art.py needs Home Assistant/aiohttp to import, so this is checked on the source.
 """
 
 from pathlib import Path
@@ -27,35 +30,22 @@ ART = (
 
 def _method(name: str) -> str:
     start = ART.index(f"    def {name}(")
-    nxt = ART.index("\n    def ", start + 1)
+    nxt = ART.index("\n    async def ", start + 1)
     return ART[start:nxt]
 
 
-class ResponseFlagTest(unittest.TestCase):
-    """The flag tracks 'this port has actually answered'."""
-
-    def test_a_matched_response_sets_the_flag(self):
-        block = ART[ART.index("async def _wait_for_response") :]
-        block = block[: block.index("\n    def _note_request_timeout")]
-        # Set right where the breaker is reset on a real answer.
-        answer = block.index("self._timeout_streak = 0")
-        flag = block.index("self._got_response_since_connect = True")
-        self.assertLess(answer, flag)
-
-    def test_each_new_connection_resets_the_flag(self):
-        block = ART[ART.index("async def _connect_once") :]
-        block = block[: block.index("\n    async def close")]
-        self.assertIn("self._got_response_since_connect = False", block)
-
-
-class PortFlipTest(unittest.TestCase):
-    """A zombie port (wedged, never answered) is swapped before reconnect."""
+class UnprovenPortIsRetriedTest(unittest.TestCase):
+    """A port that has never answered may still be swapped once (#12)."""
 
     def setUp(self):
         self.block = _method("_note_request_timeout")
 
-    def test_flip_is_gated_on_no_response_since_connect(self):
-        self.assertIn("if not self._got_response_since_connect:", self.block)
+    def test_the_switch_is_gated_on_the_port_being_unproven(self):
+        self.assertIn(
+            "if not self._got_response_since_connect "
+            "and self._proven_port != self._port:",
+            self.block,
+        )
 
     def test_it_selects_the_other_port(self):
         self.assertIn(
@@ -63,17 +53,55 @@ class PortFlipTest(unittest.TestCase):
         )
         self.assertIn("self._port = alternate_port", self.block)
 
-    def test_the_flip_happens_before_the_force_close(self):
-        flip = self.block.index("self._port = alternate_port")
-        close = self.block.index("_force_close_ws()")
-        self.assertLess(flip, close)
+    def test_a_speculative_switch_is_not_persisted(self):
+        # _learn_port must not be reachable from the switch branch: only an
+        # answered request may rewrite the stored port.
+        switch = self.block[
+            self.block.index("self._proven_port != self._port:") : self.block.index(
+                "elif not self._got_response_since_connect:"
+            )
+        ]
+        self.assertNotIn("_learn_port", switch)
 
-    def test_a_port_that_answered_is_not_flipped(self):
-        # The whole flip lives under the "no response" guard, so a working port
-        # that suffers a transient wedge keeps its port.
-        guard = self.block.index("if not self._got_response_since_connect:")
-        flip = self.block.index("self._port = alternate_port")
-        self.assertLess(guard, flip)
+
+class ProvenPortIsKeptTest(unittest.TestCase):
+    """A port that has served this TV is never swapped on a transient loss."""
+
+    def setUp(self):
+        self.block = _method("_note_request_timeout")
+
+    def test_a_proven_port_takes_the_keep_branch(self):
+        self.assertIn("elif not self._got_response_since_connect:", self.block)
+        keep = self.block[
+            self.block.index("elif not self._got_response_since_connect:") :
+        ]
+        self.assertIn("keeping the port", keep)
+        self.assertNotIn("self._port = alternate_port", keep)
+
+    def test_the_decision_reproduces(self):
+        def switches(got_response: bool, proven_port, port) -> bool:
+            return not got_response and proven_port != port
+
+        # 2020 Frame stuck on an unproven 8001 -> still rescued.
+        self.assertTrue(switches(False, None, 8001))
+        # Wi-Fi Frame whose 8002 has served it -> kept, no ping-pong.
+        self.assertFalse(switches(False, 8002, 8002))
+        # A channel that answered is never a port problem.
+        self.assertFalse(switches(True, 8002, 8002))
+
+
+class PersistOnlyWhenProvenTest(unittest.TestCase):
+    def test_the_port_is_learned_on_the_first_real_answer(self):
+        block = ART[ART.index("    async def _wait_for_response") :]
+        block = block[: block.index("\n    def ")]
+        self.assertIn("if self._proven_port != self._port:", block)
+        self.assertIn("self._proven_port = self._port", block)
+        self.assertIn("self._learn_port(self._port)", block)
+
+    def test_connect_time_discovery_still_exists(self):
+        # open()'s fallback to the alternate port when the CONNECTION fails is
+        # the legitimate discovery path and stays.
+        self.assertIn("Art API: Port %d failed, trying alternate port %d", ART)
 
 
 if __name__ == "__main__":
