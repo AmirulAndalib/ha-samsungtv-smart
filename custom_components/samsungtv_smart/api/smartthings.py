@@ -118,6 +118,12 @@ class SmartThingsTV:
         self._volume = 10
         self._source_list = None
         self._source_list_map = None
+        # Last source-list snapshot that was logged. _update_source_list runs on
+        # every SmartThings poll and its diagnostics almost never change, so they
+        # are emitted only when this signature moves (measured: 3 DEBUG lines
+        # ~2x/min, 1,974 lines in 5.5 h on one TV, burying real events). Same
+        # treatment the device-info payload already gets.
+        self._source_list_log_state: tuple | None = None
         self._source = ""
         self._channel = ""
         self._channel_name = ""
@@ -374,21 +380,14 @@ class SmartThingsTV:
         the capability or the map attribute.
         """
         has_media_input = "mediaInputSource" in main_comp
-        self._log.debug(
-            "Samsung TV: _update_source_list called, mediaInputSource in comp: %s",
-            has_media_input,
-        )
+        has_supported = False
+        supported_val = None
         if has_media_input:
             media_input = main_comp["mediaInputSource"]
 
             has_supported = "supportedInputSources" in media_input
             supported_val = (
                 media_input["supportedInputSources"].value if has_supported else None
-            )
-            self._log.debug(
-                "Samsung TV: supportedInputSources present=%s, value=%s",
-                has_supported,
-                supported_val,
             )
 
             if has_supported and supported_val:
@@ -432,10 +431,37 @@ class SmartThingsTV:
             )
             await self._fetch_input_source_map()
 
+        self._log_source_list_state(has_media_input, has_supported, supported_val)
+
+    def _log_source_list_state(
+        self, has_media_input: bool, has_supported: bool, supported_val
+    ) -> None:
+        """Emit the source-list diagnostics only when the snapshot changes.
+
+        These three lines used to be logged on every SmartThings poll while
+        describing a list that essentially never moves.
+        """
+        signature = (
+            has_media_input,
+            has_supported,
+            repr(supported_val),
+            tuple(sorted((self._source_list_map or {}).items())),
+        )
+        if signature == self._source_list_log_state:
+            return
+        self._source_list_log_state = signature
+
+        self._log.debug(
+            "Samsung TV: source list updated (mediaInputSource in comp: %s, "
+            "supportedInputSources present=%s, value=%s)",
+            has_media_input,
+            has_supported,
+            supported_val,
+        )
         if self._source_list:
             self._log.debug(
                 "Samsung TV: sources loaded: %s",
-                {k: v for k, v in self._source_list_map.items()},
+                dict(self._source_list_map or {}),
             )
         else:
             self._log.debug("Samsung TV: no sources available after update")
