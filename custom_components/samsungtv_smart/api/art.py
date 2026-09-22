@@ -494,14 +494,20 @@ class SamsungTVAsyncArt:
             # "Port changed from N to N" line.
             if await self._connect_once(alternate_port):
                 if previous_port != alternate_port:
-                    self._log.warning(
-                        "Art API: Port changed from %d to %d "
-                        "(likely a firmware update filtered the previous port)",
+                    self._log.info(
+                        "Art API: port %d did not accept a connection, now on "
+                        "port %d (not stored until it answers a request)",
                         previous_port,
                         alternate_port,
                     )
+                # Switch in memory only. Connecting is not evidence the art app
+                # will serve anything, and on a Wi-Fi Frame a single failed
+                # connect to the good port at startup would otherwise rewrite
+                # the stored port for good (measured on 192.168.1.31: one
+                # "Port changed from 8002 to 8001" at start-up, persisted). The
+                # port is written once it actually answers — see
+                # _wait_for_response, which owns _proven_port.
                 self._port = alternate_port
-                self._learn_port(alternate_port)
                 return True
 
             # Both ports failed: track the failure once for the whole attempt

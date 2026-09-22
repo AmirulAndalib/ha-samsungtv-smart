@@ -103,6 +103,21 @@ class PersistOnlyWhenProvenTest(unittest.TestCase):
         # the legitimate discovery path and stays.
         self.assertIn("Art API: Port %d failed, trying alternate port %d", ART)
 
+    def test_connect_time_discovery_does_not_persist_the_port(self):
+        # Connecting is not evidence the art app will serve anything: on a Wi-Fi
+        # Frame one failed connect to the good port at start-up would otherwise
+        # rewrite the stored port for good. open() switches in memory only.
+        start = ART.index("            previous_port = self._port")
+        block = ART[start : ART.index("self._port = alternate_port", start)]
+        self.assertNotIn("_learn_port", block)
+
+    def test_only_the_proven_path_writes_the_port(self):
+        # One definition plus exactly one call site, in _wait_for_response.
+        self.assertEqual(ART.count("self._learn_port("), 1)
+        answered = ART[ART.index("    async def _wait_for_response") :]
+        answered = answered[: answered.index("\n    def ")]
+        self.assertIn("self._learn_port(self._port)", answered)
+
 
 if __name__ == "__main__":
     unittest.main()
