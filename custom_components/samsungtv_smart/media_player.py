@@ -3099,6 +3099,25 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         key_power_sent = False
         if not self._ws.auth_blocked:
             key_power_sent = await self.async_send_command(cmd_power_on)
+            # send_key() reports success as soon as the frame is written, but a
+            # Frame that is asleep can answer ms.channel.unauthorized — which
+            # arrives asynchronously and never reaches that result. auth_blocked
+            # does not catch it either: it needs several consecutive rejections
+            # and resets whenever the TV accepts a connection while awake, so it
+            # is False on a set that is merely rejecting right now. The channel
+            # itself is the honest signal — a rejected one is not connected — so
+            # a key sent over a channel that is not up cannot have woken
+            # anything, and the configured wake method below must still run.
+            # Without this, a reachable-but-rejecting TV (192.168.1.31: KEY_POWER
+            # -> unauthorized, every 20 min, zero SmartThings attempts all day)
+            # silently skipped it and the Power on method option was dead.
+            if key_power_sent and not self._ws.is_connected:
+                self._log.debug(
+                    "Power on: KEY_POWER was written but the remote channel on "
+                    "%s is not connected; using the configured wake method",
+                    self._host,
+                )
+                key_power_sent = False
         if not key_power_sent:
             turn_on_method = PowerOnMethod(
                 self._get_option(CONF_POWER_ON_METHOD, PowerOnMethod.WOL.value)

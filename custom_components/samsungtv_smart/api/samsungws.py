@@ -505,6 +505,16 @@ class SamsungTVWS:
         ``MAX_CONSECUTIVE_NEW_TOKENS`` threshold instead of each needing its
         own counter.
         """
+        # A rejected channel is not a usable connection, whatever a previous
+        # connect left behind. Saying so here is what lets a caller tell a key
+        # that was merely written to the socket from one the TV accepted:
+        # send_key() returns True as soon as the frame goes out, while this
+        # event arrives asynchronously on the socket thread and never reaches
+        # that result (a power-on to a rejecting Frame therefore looked like a
+        # success and skipped the configured wake method entirely). The
+        # ms.channel.connect path sets _is_connected back to True right after
+        # calling this, so a new-token issuance is unaffected.
+        self._is_connected = False
         self._consecutive_new_tokens += 1
         if (
             not self._auth_blocked
