@@ -323,7 +323,7 @@ After initial setup, click **Configure** on the integration card to access these
 | **App list** | Define custom app shortcuts (JSON) |
 | **App load method** | How to load the app list: All, Default, or Disabled |
 | **App launch method** | Standard, Remote, or REST |
-| **Power on method** | Wake-on-LAN or SmartThings |
+| **Power on method** | How the TV is woken when it is off: **Wake-on-LAN** (default), **SmartThings**, or **IP Control**. This is an explicit choice, not "whatever is available" — pairing IP Control does not make it the wake method. Note that IP Control cannot wake a set that has left the network (port 1516 stops answering when it is off, and the integration then falls back to WOL), so on a Frame that drops off Wi-Fi in standby, **SmartThings** is the reliable option, with WOL next if the magic packet reaches it |
 | **WOL repeat count** | Number of WOL packets sent (1–5) |
 | **Scan interval** | SmartThings polling interval (seconds) |
 | **Use ST channel info** | Fetch live channel info from SmartThings |
@@ -1047,10 +1047,13 @@ What to do:
   Frame that leaves the network in standby; **Wake-on-LAN** also works if the
   magic packet reaches the TV). These wake paths do **not** need the remote
   WebSocket token.
-- From 8.8.16 the integration detects this "remote channel can't authorize"
-  state and **skips the futile `KEY_POWER` and uses the configured wake method
-  directly** (before, `KEY_POWER` reported "sent" even when the TV ignored it,
-  so the wake method was never reached). Normal TVs are unaffected.
+- From 8.8.21 the integration no longer mistakes a rejected `KEY_POWER` for a
+  successful one, and **falls back to the configured wake method** whenever the
+  remote channel is not actually up. Previously `KEY_POWER` reported "sent" as
+  soon as the frame was written — the TV's `ms.channel.unauthorized` arrives
+  afterwards and never reached that result — so on a reachable-but-rejecting set
+  the wake method was never reached and the **Power on method** option had no
+  effect. Normal TVs, where the channel is connected, are unaffected.
 
 Once the TV is awake, Art Mode activation itself uses IP Control and works
 normally.
