@@ -7,6 +7,10 @@
 
 A custom integration for Home Assistant to control Samsung Smart TVs (Tizen OS), based on the excellent work of [ollo69/ha-samsungtv-smart](https://github.com/ollo69/ha-samsungtv-smart).
 
+Install it in one click — this is a HACS **custom repository**, not in the default store (see [Installation](#installation)):
+
+[![Open your Home Assistant instance and add a custom repository.](https://my.home-assistant.io/badges/hacs_custom_repository.svg)](https://my.home-assistant.io/redirect/hacs_custom_repository/?owner=TheFab21&repository=ha-samsungtv-smart&category=integration)
+
 If this project is useful to you, you can support its development:
 
 <a href="https://buymeacoffee.com/thefab21" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-black.png" alt="Buy Me A Coffee" height="41" width="174"></a>
