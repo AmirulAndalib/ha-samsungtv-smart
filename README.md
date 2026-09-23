@@ -7,9 +7,7 @@
 
 A custom integration for Home Assistant to control Samsung Smart TVs (Tizen OS), based on the excellent work of [ollo69/ha-samsungtv-smart](https://github.com/ollo69/ha-samsungtv-smart).
 
-Install it in one click — this is a HACS **custom repository**, not in the default store (see [Installation](#installation)):
-
-[![Open your Home Assistant instance and add a custom repository.](https://my.home-assistant.io/badges/hacs_custom_repository.svg)](https://my.home-assistant.io/redirect/hacs_custom_repository/?owner=TheFab21&repository=ha-samsungtv-smart&category=integration)
+Installed through HACS as a **custom repository** (it is not in the HACS default store) — see [Installation](#installation) for the two-step setup.
 
 If this project is useful to you, you can support its development:
 
@@ -150,12 +148,11 @@ This fork is a drop-in replacement for ollo69's integration. Migration is straig
 
 ### HACS (recommended)
 
-[![Open your Home Assistant instance and add a custom repository.](https://my.home-assistant.io/badges/hacs_custom_repository.svg)](https://my.home-assistant.io/redirect/hacs_custom_repository/?owner=TheFab21&repository=ha-samsungtv-smart&category=integration)
+This integration is a **custom repository** — it is not in the HACS default store, so it has to be added once by hand (there is no one-click link for custom repositories):
 
-Or manually add the custom repository in HACS:
-1. Go to **HACS → Integrations → ⋮ → Custom repositories**
-2. Add `https://github.com/TheFab21/ha-samsungtv-smart` as **Integration**
-3. Search for **SamsungTV Smart** and install
+1. Go to **HACS → Integrations → ⋮ (top right) → Custom repositories**
+2. Add `https://github.com/TheFab21/ha-samsungtv-smart` as category **Integration**
+3. Search for **SamsungTV Smart**, install it, and restart Home Assistant
 
 
 ### Manual
