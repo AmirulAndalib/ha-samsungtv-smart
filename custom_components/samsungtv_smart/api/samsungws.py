@@ -480,7 +480,10 @@ class SamsungTVWS:
         """
         if self.port != 8001 or self._tried_alt_port:
             return False
-        self._log.warning(
+        # Expected, self-correcting transition on Frames whose token flow only
+        # lives on the secure channel: INFO, not WARNING. Only the case where
+        # BOTH ports reject (below) is an actionable problem.
+        self._log.info(
             "TV %s rejected the unencrypted 8001 remote channel repeatedly "
             "(no on-screen prompt) — switching to the secure 8002 channel",
             self.host,
