@@ -1044,6 +1044,15 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         entry = self.hass.config_entries.async_get_entry(self._entry_id)
         if entry is None or entry.data.get(CONF_PORT) == port:
             return
+        # Logged so the runtime port heal is visible in a debug capture — a
+        # recurring 8001 -> 8002 write across restarts means something is
+        # rewriting CONF_PORT back to 8001 between sessions.
+        self._log.info(
+            "Persisting WS port for %s: %s -> %s",
+            self._host,
+            entry.data.get(CONF_PORT),
+            port,
+        )
         self.hass.config_entries.async_update_entry(
             entry, data={**entry.data, CONF_PORT: port}
         )
@@ -1456,23 +1465,11 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         self._ws.register_status_callback(update_status_callback)
         await self.hass.async_add_executor_job(self._ws.start_poll)
 
-        # If the WS layer resolved a different port than what is saved in
-        # config (e.g. firmware update filtered port 8002 → fell back to 8001),
-        # persist the new port so subsequent reloads use the correct one
-        # without needing a manual reconfiguration.
-        resolved_port = self._ws.port
-        entry = self.hass.config_entries.async_get_entry(self._entry_id)
-        if entry and resolved_port and resolved_port != entry.data.get(CONF_PORT):
-            self._log.warning(
-                "SamsungTV %s: updating saved port from %s to %s"
-                " (port auto-detected after connection)",
-                self._host,
-                entry.data.get(CONF_PORT),
-                resolved_port,
-            )
-            self.hass.config_entries.async_update_entry(
-                entry, data={**entry.data, CONF_PORT: resolved_port}
-            )
+        # The remote channel's port heal (8001 -> 8002) happens asynchronously
+        # on the socket thread seconds after start_poll() returns, so reading
+        # self._ws.port here only ever sees the pre-heal port — the healed port
+        # is persisted by register_port_changed_callback -> _persist_art_port
+        # when the flip actually occurs, not from a synchronous read here.
 
         # Load SmartThings sources if configured
         if self._st:

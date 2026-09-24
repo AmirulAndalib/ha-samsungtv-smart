@@ -48,7 +48,7 @@ from homeassistant.helpers.storage import STORAGE_DIR
 from homeassistant.helpers.typing import ConfigType
 
 from .api.art import SamsungTVAsyncArt
-from .api.samsungws import ConnectionFailure, SamsungTVWS
+from .api.samsungws import ConnectionFailure, Ping, SamsungTVWS
 from .api.smartthings import SmartThingsTV
 from .const import (
     ATTR_DEVICE_MAC,
@@ -1006,7 +1006,20 @@ class SamsungTVInfo:
                     (alternate, False),
                 ]
         else:
-            attempts = [(8001, False), (8002, False)]
+            # No preferred port yet (initial pairing). Prefer the secure 8002
+            # channel when the TV actually exposes it. On many Frames the plain
+            # 8001 channel completes the WS handshake — and even hands back a
+            # token — so open() "succeeds" on 8001 and 8001 gets stored; but
+            # that token is refused at runtime (ms.channel.unauthorized) because
+            # the real token flow only lives on 8002. Storing 8001 then forces
+            # the remote channel to re-heal to 8002 on every start. A quick TCP
+            # probe keeps this safe for the sets that genuinely need 8001: on
+            # 2024 Frames 8002 is filtered and on ~2020 sets it is absent, so
+            # the probe fails fast and we fall back to trying 8001 first.
+            if Ping(self._hostname).ping(8002):
+                attempts = [(8002, False), (8001, False)]
+            else:
+                attempts = [(8001, False), (8002, False)]
 
         for port, use_token in attempts:
             timeout = DEFAULT_TIMEOUT if use_token else 45
