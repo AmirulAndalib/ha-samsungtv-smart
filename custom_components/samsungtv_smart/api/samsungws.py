@@ -212,6 +212,11 @@ class SamsungTVAsyncRest:
         self._session = session
         self._timeout = None if timeout == 0 else timeout
         self._port_callback: Callable[[int], None] | None = None
+        # The port is "proven" the first time it answers a request. A proven
+        # port is never swapped/persisted on a transient failure — on a sleeping
+        # panel both REST ports flap and the old always-switch rule ping-ponged
+        # (57 <-> 58 flips in ~50 h). Only an unproven port is adopted.
+        self._proven_port: int | None = None
 
     def register_port_callback(self, func: Callable[[int], None]) -> None:
         """Register a callback invoked when the working REST port changes.
@@ -250,11 +255,18 @@ class SamsungTVAsyncRest:
         Tries the configured port first, then falls back to the other REST
         port (8001/8002) on a connection failure — some firmwares (e.g.
         2024+ Frame) only serve the REST API on 8002, while older sets may
-        only answer on 8001. On a successful fallback the working port is
-        learned for subsequent calls and persisted via register_port_callback.
+        only answer on 8001.
+
+        The port is only *adopted* (switched and persisted) while it is
+        unproven — genuine discovery of the port this TV actually serves. Once
+        a port has answered a request it is proven and kept: a proven port that
+        merely fails transiently (a sleeping panel, where both ports flap) is
+        NOT swapped, so the request is still served from the alternate for this
+        call but the stored port does not ping-pong (57 <-> 58 flips in ~50 h
+        before this).
         """
         try:
-            return await self._rest_request_once(target, method, self._port)
+            result = await self._rest_request_once(target, method, self._port)
         except aiohttp.ClientConnectionError:
             alternate_port = 8001 if self._port == 8002 else 8002
             try:
@@ -263,15 +275,33 @@ class SamsungTVAsyncRest:
                 raise HttpApiError(
                     "TV unreachable or feature not supported on this model."
                 ) from ex
-            self._log.warning(
-                "REST request for %s failed on port %s, succeeded on %s "
-                "-- switching to it",
-                self._host,
-                self._port,
-                alternate_port,
-            )
-            self._learn_port(alternate_port)
+            if self._proven_port != self._port:
+                # The configured port has never answered — adopt the one that
+                # does. It is persisted below once it answers as the primary.
+                self._log.info(
+                    "REST API: port %s did not answer for %s, now trying %s "
+                    "(not stored until it answers as the primary)",
+                    self._port,
+                    target or "device info",
+                    alternate_port,
+                )
+                self._port = alternate_port
+            else:
+                # A proven port is only momentarily down (e.g. TV asleep);
+                # serve this call from the alternate but keep the proven port.
+                self._log.debug(
+                    "REST API: proven port %s momentarily down, served %s from "
+                    "%s; keeping the proven port",
+                    self._port,
+                    target or "device info",
+                    alternate_port,
+                )
             return result
+        # The primary answered: prove and persist it the first time.
+        if self._proven_port != self._port:
+            self._proven_port = self._port
+            self._learn_port(self._port)
+        return result
 
     async def async_rest_device_info(self) -> dict[str, Any]:
         """Get device info using rest api call."""
