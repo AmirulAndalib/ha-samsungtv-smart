@@ -1096,6 +1096,14 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         entry = self.hass.config_entries.async_get_entry(self._entry_id)
         if entry is None or entry.data.get(CONF_REST_PORT) == port:
             return
+        # Same observability as the WS and Art ports: a stored REST port that
+        # keeps changing after startup is the ping-pong regressing (#273).
+        self._log.info(
+            "Persisting REST port for %s: %s -> %s",
+            self._host,
+            entry.data.get(CONF_REST_PORT),
+            port,
+        )
         self.hass.config_entries.async_update_entry(
             entry, data={**entry.data, CONF_REST_PORT: port}
         )
