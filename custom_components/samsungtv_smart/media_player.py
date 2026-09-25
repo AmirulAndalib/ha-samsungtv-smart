@@ -108,6 +108,7 @@ from .const import (
     CONF_APP_LAUNCH_METHOD,
     CONF_APP_LIST,
     CONF_APP_LOAD_METHOD,
+    CONF_ART_PORT,
     CONF_AUTH_METHOD,
     CONF_CHANNEL_LIST,
     CONF_DUMP_APPS,
@@ -686,7 +687,7 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
 
         def ws_port_changed_callback(port):
             """Persist the remote channel's self-healed port (8001<->8002)."""
-            run_callback_threadsafe(self.hass.loop, self._persist_art_port, port)
+            run_callback_threadsafe(self.hass.loop, self._persist_ws_port, port)
 
         self._ws.register_port_changed_callback(ws_port_changed_callback)
 
@@ -717,7 +718,11 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         else:
             self._art_api = SamsungTVAsyncArt(
                 host=self._host,
-                port=config.get(CONF_PORT, DEFAULT_PORT),
+                # Art keeps its own learned port, decoupled from CONF_PORT (the
+                # remote WS/token port), so the art self-heal never overwrites
+                # the remote channel's port. Falls back to CONF_PORT for existing
+                # installs / single-port TVs.
+                port=config.get(CONF_ART_PORT) or config.get(CONF_PORT, DEFAULT_PORT),
                 token=config.get(CONF_TOKEN),
                 session=session,
                 timeout=DEFAULT_TIMEOUT,
@@ -1033,13 +1038,13 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             entry, data={**entry.data, CONF_ST_PICTURE_MODE_CAPABILITY: capability}
         )
 
-    def _persist_art_port(self, port: int) -> None:
-        """Persist the Art API's runtime port fallback to entry.data.
+    def _persist_ws_port(self, port: int) -> None:
+        """Persist the remote channel's self-healed port to entry.data.
 
-        Called (on the event loop) by the Art API when its configured port
-        stopped responding and the alternate port (8001 <-> 8002) worked
-        instead, so the next restart connects directly instead of paying the
-        failed attempt again.
+        Stored under CONF_PORT (the remote WS/token port). Called on the event
+        loop when the remote channel heals 8001 -> 8002. The Art API persists
+        its own port separately (CONF_ART_PORT) so its transient boot-time 8001
+        can never overwrite this value.
         """
         entry = self.hass.config_entries.async_get_entry(self._entry_id)
         if entry is None or entry.data.get(CONF_PORT) == port:
@@ -1055,6 +1060,29 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         )
         self.hass.config_entries.async_update_entry(
             entry, data={**entry.data, CONF_PORT: port}
+        )
+
+    def _persist_art_port(self, port: int) -> None:
+        """Persist the Art API's runtime port fallback to entry.data.
+
+        Stored under CONF_ART_PORT, separate from CONF_PORT, so the Art API's
+        self-heal never overwrites the remote channel's port. While a TV boots,
+        the art socket can transiently answer on 8001 before the secure 8002 art
+        channel is ready; sharing CONF_PORT let that transient value clobber the
+        remote channel's 8002 and force an 8001 -> 8002 re-heal on every restart
+        (observed on 192.168.1.161).
+        """
+        entry = self.hass.config_entries.async_get_entry(self._entry_id)
+        if entry is None or entry.data.get(CONF_ART_PORT) == port:
+            return
+        self._log.info(
+            "Persisting Art port for %s: %s -> %s",
+            self._host,
+            entry.data.get(CONF_ART_PORT),
+            port,
+        )
+        self.hass.config_entries.async_update_entry(
+            entry, data={**entry.data, CONF_ART_PORT: port}
         )
 
     def _persist_rest_port(self, port: int) -> None:
@@ -1468,7 +1496,7 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
         # The remote channel's port heal (8001 -> 8002) happens asynchronously
         # on the socket thread seconds after start_poll() returns, so reading
         # self._ws.port here only ever sees the pre-heal port — the healed port
-        # is persisted by register_port_changed_callback -> _persist_art_port
+        # is persisted by register_port_changed_callback -> _persist_ws_port
         # when the flip actually occurs, not from a synchronous read here.
 
         # Load SmartThings sources if configured
