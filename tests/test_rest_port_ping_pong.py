@@ -64,6 +64,19 @@ class RestProvenPortIsKeptTest(unittest.TestCase):
         # is DEBUG and genuine discovery is INFO.
         self.assertNotIn("-- switching to it", SAMSUNGWS)
 
+    def test_the_rest_persist_is_logged(self):
+        # Without this, "no switching lines" is true by construction and says
+        # nothing; a logged persist makes a regression visible (#273).
+        mp = (
+            Path(__file__).parents[1]
+            / "custom_components"
+            / "samsungtv_smart"
+            / "media_player.py"
+        ).read_text()
+        start = mp.index("    def _persist_rest_port(")
+        block = mp[start : mp.index("\n    async def ", start)]
+        self.assertIn("Persisting REST port for", block)
+
     def test_the_decision_reproduces(self):
         def adopts(proven_port, port) -> bool:
             # True => switch stored port (discovery); False => keep proven port.
