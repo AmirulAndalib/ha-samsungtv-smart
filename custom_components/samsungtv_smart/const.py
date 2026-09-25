@@ -170,6 +170,13 @@ CONF_POWER_ON_METHOD = "power_on_method"
 # self-heal mechanisms fight forever (8001 <-> 8002 ping-pong). Falls back to
 # CONF_PORT when unset (existing installs / TVs where one port serves both).
 CONF_REST_PORT = "rest_port"
+# Art WebSocket port, learned independently of CONF_PORT (the remote WS/token
+# port). While a TV boots, the art socket can transiently accept and answer on
+# 8001 before the secure 8002 art channel is ready, so the Art API would "prove"
+# 8001 and — when it shared CONF_PORT with the remote channel — overwrite the
+# remote channel's correct 8002, forcing an 8001 -> 8002 re-heal on every
+# restart (observed on 192.168.1.161). Falls back to CONF_PORT when unset.
+CONF_ART_PORT = "art_port"
 CONF_SHOW_CHANNEL_NR = "show_channel_number"
 CONF_SOURCE_LIST = "source_list"
 CONF_SYNC_TURN_OFF = "sync_turn_off"

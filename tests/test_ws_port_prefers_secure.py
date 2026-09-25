@@ -101,10 +101,55 @@ class SelfHealIsInfoNotWarningTest(unittest.TestCase):
 
 class PersistIsObservableTest(unittest.TestCase):
     def test_ws_port_persist_logs_old_and_new(self):
-        block = _method(MEDIA_PLAYER, "    def _persist_art_port(")
+        block = _method(MEDIA_PLAYER, "    def _persist_ws_port(")
         self.assertIn("Persisting WS port for", block)
-        # Still guarded on an actual change.
+        # Still guarded on an actual change, and writes the remote CONF_PORT.
         self.assertIn("entry.data.get(CONF_PORT) == port", block)
+        self.assertIn("CONF_PORT: port", block)
+
+
+class ArtPortIsDecoupledFromRemotePortTest(unittest.TestCase):
+    """The Art API persists its own port so it can't clobber the remote one.
+
+    Caught on 192.168.1.161: while the TV booted, the art socket answered on
+    8001, the Art API "proved" it, and — sharing CONF_PORT with the remote
+    channel — wrote 8002 -> 8001, forcing the remote channel to re-heal on the
+    next restart. Same class of bug the REST port (CONF_REST_PORT) already
+    escaped.
+    """
+
+    def test_the_remote_and_art_callbacks_use_different_persisters(self):
+        # Remote heal -> _persist_ws_port (CONF_PORT); art heal -> _persist_art_port.
+        self.assertIn(
+            "run_callback_threadsafe(self.hass.loop, self._persist_ws_port, port)",
+            MEDIA_PLAYER,
+        )
+        self.assertIn(
+            "self._art_api.register_port_callback(self._persist_art_port)",
+            MEDIA_PLAYER,
+        )
+
+    def test_art_persister_writes_its_own_key_not_conf_port(self):
+        block = _method(MEDIA_PLAYER, "    def _persist_art_port(")
+        self.assertIn("CONF_ART_PORT: port", block)
+        self.assertIn("entry.data.get(CONF_ART_PORT) == port", block)
+        # Must not touch the remote channel's CONF_PORT.
+        self.assertNotIn("CONF_PORT: port", block)
+
+    def test_art_api_reads_its_own_port_with_conf_port_fallback(self):
+        self.assertIn(
+            "port=config.get(CONF_ART_PORT) or config.get(CONF_PORT, DEFAULT_PORT),",
+            MEDIA_PLAYER,
+        )
+
+    def test_conf_art_port_excluded_from_reload(self):
+        start = INIT.index("_NO_RELOAD_DATA_KEYS = ")
+        block = INIT[start : INIT.index("def _reload_fingerprint", start)]
+        self.assertIn("CONF_ART_PORT", block)
+
+    def test_reconfigure_clears_the_learned_art_port(self):
+        cfg = (ROOT / "config_flow.py").read_text()
+        self.assertIn("CONF_ART_PORT: None", cfg)
 
 
 class DeadPortReadRemovedTest(unittest.TestCase):
