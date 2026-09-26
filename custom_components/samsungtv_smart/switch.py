@@ -37,6 +37,7 @@ from .api.ipcontrol import (
 from .art_mode_guard import ArtModeWriteSuppressed, guard_for
 from .const import (
     AUTH_METHOD_OAUTH,
+    CONF_ART_PORT,
     CONF_AUTH_METHOD,
     CONF_ENABLE_IP_CONTROL,
     CONF_IP_CONTROL_ART_MODE,
@@ -140,7 +141,7 @@ async def async_setup_entry(
     if art_api is None:
         art_api = SamsungTVAsyncArt(
             host=host,
-            port=port,
+            port=entry.data.get(CONF_ART_PORT) or port,
             token=token,
             session=session,
             timeout=5,
