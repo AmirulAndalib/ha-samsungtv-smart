@@ -479,6 +479,13 @@ class SamsungTVAsyncArt:
             # configured port (e.g. 2024 Tizen filtering 8002) would otherwise
             # leave Art Mode permanently unreachable until the user manually
             # reconfigures. Mirror the same fallback here so it self-heals.
+            # Once a port has answered this session it stays the reference:
+            # a previous connect may have fallen back to the other port (a
+            # waking TV that briefly refuses the proven one), so retry the
+            # proven port first rather than staying on the fallback.
+            if self._proven_port is not None and self._port != self._proven_port:
+                self._port = self._proven_port
+
             if await self._connect_once(self._port):
                 return True
 
@@ -941,7 +948,12 @@ class SamsungTVAsyncArt:
             # First real answer on this port proves it: settle it and persist
             # it. Persisting here rather than on a speculative switch means the
             # stored port only ever records a port the TV actually served.
-            if self._proven_port != self._port:
+            # Only the FIRST answering port of the session is proven: an answer
+            # on a fallback port (a waking TV refusing the proven one for a few
+            # seconds) serves the request but must not re-prove and persist it,
+            # or the stored port flips at every wake (8002 -> 8001 measured on
+            # four Frames in one evening, #273).
+            if self._proven_port is None:
                 self._proven_port = self._port
                 self._learn_port(self._port)
             return result

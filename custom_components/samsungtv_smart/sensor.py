@@ -55,6 +55,7 @@ from .const import (
     ART_IDENTIFY_DEBOUNCE,
     CONF_API_KEY,
     CONF_ART_IDENTIFY_ENABLE,
+    CONF_ART_PORT,
     CONF_DEVICE_ID,
     CONF_ENABLE_IP_CONTROL,
     CONF_IP_CONTROL_POLL_INTERVAL,
@@ -322,7 +323,7 @@ async def async_setup_entry(  # noqa: C901
     if not art_api:
         art_api = SamsungTVAsyncArt(
             host=host,
-            port=port,
+            port=entry.data.get(CONF_ART_PORT) or port,
             token=token,
             session=session,
             timeout=5,

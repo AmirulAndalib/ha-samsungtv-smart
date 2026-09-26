@@ -1280,7 +1280,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # mode detection silently dies. One instance here, everyone reuses it.
     hass.data[DOMAIN][entry.entry_id][DATA_ART_API] = SamsungTVAsyncArt(
         host=config[CONF_HOST],
-        port=config.get(CONF_PORT, DEFAULT_PORT),
+        # The Art channel keeps its own learned port (CONF_ART_PORT), decoupled
+        # from the remote WS port. Reading CONF_PORT here made the stored art
+        # port write-only: every boot restarted art on the remote port (#273).
+        port=config.get(CONF_ART_PORT) or config.get(CONF_PORT, DEFAULT_PORT),
         token=config.get(CONF_TOKEN),
         session=async_get_clientsession(hass),
         timeout=DEFAULT_TIMEOUT,

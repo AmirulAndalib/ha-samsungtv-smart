@@ -94,7 +94,7 @@ class PersistOnlyWhenProvenTest(unittest.TestCase):
     def test_the_port_is_learned_on_the_first_real_answer(self):
         block = ART[ART.index("    async def _wait_for_response") :]
         block = block[: block.index("\n    def ")]
-        self.assertIn("if self._proven_port != self._port:", block)
+        self.assertIn("if self._proven_port is None:", block)
         self.assertIn("self._proven_port = self._port", block)
         self.assertIn("self._learn_port(self._port)", block)
 
@@ -117,6 +117,49 @@ class PersistOnlyWhenProvenTest(unittest.TestCase):
         answered = ART[ART.index("    async def _wait_for_response") :]
         answered = answered[: answered.index("\n    def ")]
         self.assertIn("self._learn_port(self._port)", answered)
+
+
+class ArtPortSettlesAcrossWakesTest(unittest.TestCase):
+    """#273: the stored art port flipped 8002 -> 8001 at wakes, back at boot."""
+
+    def test_only_the_first_answer_of_a_session_is_proven(self):
+        block = ART[ART.index("    async def _wait_for_response") :]
+        block = block[: block.index("\n    def ")]
+        self.assertIn("if self._proven_port is None:", block)
+        self.assertNotIn("if self._proven_port != self._port:", block)
+
+    def test_open_retries_the_proven_port_first(self):
+        block = ART[ART.index("    async def open(") :]
+        gate = block.index(
+            "if self._proven_port is not None and self._port != self._proven_port:"
+        )
+        first_connect = block.index("if await self._connect_once(self._port):")
+        self.assertLess(gate, first_connect)
+        self.assertIn("self._port = self._proven_port", block[gate:first_connect])
+
+    def test_shared_instance_reads_the_stored_art_port(self):
+        init = (
+            Path(__file__).parents[1]
+            / "custom_components"
+            / "samsungtv_smart"
+            / "__init__.py"
+        ).read_text()
+        start = init.index("[DATA_ART_API] = SamsungTVAsyncArt(")
+        call = init[start : init.index("\n    )", start)]
+        self.assertIn(
+            "port=config.get(CONF_ART_PORT) or config.get(CONF_PORT, DEFAULT_PORT)",
+            call,
+        )
+
+    def test_the_decision_reproduces(self):
+        def after_answer(proven, port):
+            # returns (proven, persisted?)
+            return (port, True) if proven is None else (proven, False)
+
+        # Boot: stored 8001 answers first -> proven, no flip later.
+        self.assertEqual(after_answer(None, 8001), (8001, True))
+        # Wake: 8001 refused, 8002 fallback answers -> served, not persisted.
+        self.assertEqual(after_answer(8001, 8002), (8001, False))
 
 
 if __name__ == "__main__":
