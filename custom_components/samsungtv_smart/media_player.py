@@ -5107,14 +5107,51 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
                 self._art_api._supports_thumbnail_list,
             )
 
-            for idx, artwork in enumerate(artwork_list, 1):
-                content_id = artwork.get("content_id")
-                if not content_id:
-                    continue
+            # The art channel serializes requests and, after a wedge, refuses
+            # them for a recovery cooldown (30 s doubling to 240 s). Without
+            # this the loop ploughed on through the cooldown: every remaining
+            # image failed in ~3 s (13 of 16 on a Frame that had just woken).
+            # Pause for the cooldown, retry the image that was cut off, then
+            # resume. Give up only after a few pauses or a long total wait.
+            max_pauses = 3
+            max_total_wait = 300.0
+            pauses = 0
+            total_wait = 0.0
+            not_processed: list[str] = []
+            items = [a for a in artwork_list if a.get("content_id")]
+            retried_after_pause: set[str] = set()
+            idx = 0
+            while idx < len(items):
+                content_id = items[idx]["content_id"]
+
+                pause = self._art_api.recovery_remaining
+                if pause > 0:
+                    wait = pause + 2
+                    if pauses >= max_pauses or total_wait + wait > max_total_wait:
+                        not_processed = [a["content_id"] for a in items[idx:]]
+                        self._log.warning(
+                            "Batch thumbnail download: the art channel is still "
+                            "recovering after %d pause(s) (%.0fs); stopping with "
+                            "%d image(s) not processed — run it again later",
+                            pauses,
+                            total_wait,
+                            len(not_processed),
+                        )
+                        break
+                    pauses += 1
+                    total_wait += wait
+                    self._log.info(
+                        "Batch thumbnail download: art channel recovering, "
+                        "pausing %.0fs before resuming (%d/%d done)",
+                        wait,
+                        idx,
+                        len(items),
+                    )
+                    await asyncio.sleep(wait)
 
                 try:
                     self._log.debug(
-                        "Processing thumbnail %d/%d: %s", idx, total, content_id
+                        "Processing thumbnail %d/%d: %s", idx + 1, total, content_id
                     )
 
                     # Download with file existence check (unless force_download)
@@ -5123,6 +5160,14 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
                     )
 
                     if "error" in result:
+                        # Cut off by a wedge mid-download: retry this image once
+                        # after the pause instead of counting it as failed.
+                        if (
+                            self._art_api.recovery_remaining > 0
+                            and content_id not in retried_after_pause
+                        ):
+                            retried_after_pause.add(content_id)
+                            continue
                         failed.append(
                             {"content_id": content_id, "error": result.get("error")}
                         )
@@ -5155,12 +5200,16 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
                         "Failed to process thumbnail for %s: %s", content_id, ex
                     )
                     failed.append({"content_id": content_id, "error": str(ex)})
+                idx += 1
 
             # Build summary with metadata
             result = {
                 "service": "art_get_thumbnails_batch",
-                "success": True,
+                "success": not not_processed,
                 "total_artworks": total,
+                "not_processed": len(not_processed),
+                "not_processed_list": not_processed,
+                "pauses": pauses,
                 "downloaded": len(downloaded),
                 "skipped": len(skipped),
                 "failed": len(failed),
@@ -5179,12 +5228,16 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             }
 
             self._log.info(
-                "Batch thumbnail download complete: %d downloaded, %d skipped (already exist), %d failed, %d removed out of %d total",
+                "Batch thumbnail download complete: %d downloaded, %d skipped "
+                "(already exist), %d failed, %d not processed, %d removed out of "
+                "%d total (%d pause(s) for art channel recovery)",
                 len(downloaded),
                 len(skipped),
                 len(failed),
+                len(not_processed),
                 len(removed_files),
                 total,
+                pauses,
             )
 
             self._store_art_result(result)

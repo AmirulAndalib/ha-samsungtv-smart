@@ -326,6 +326,15 @@ class SamsungTVAsyncArt:
         self._art_uuid = str(uuid.uuid4())
         return self._art_uuid
 
+    @property
+    def recovery_remaining(self) -> float:
+        """Seconds left in the post-wedge recovery cooldown (0 when requests flow).
+
+        While it is positive every request is refused immediately, so a caller
+        looping over many requests (thumbnail batch) should pause, not plough on.
+        """
+        return max(0.0, self._request_cooldown_until - time.monotonic())
+
     def register_capability_callback(self, func) -> None:
         """Register a callback fired when a get-capability is first learned.
 
