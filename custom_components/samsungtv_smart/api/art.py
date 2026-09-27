@@ -1247,24 +1247,32 @@ class SamsungTVAsyncArt:
             data = await self._send_art_request({"request": "api_version"})
         return data.get("version") if data else None
 
-    async def available(self, category: str | None = None) -> list:
+    async def available(
+        self, category: str | None = None, *, strict: bool = False
+    ) -> list | None:
         """Get list of available artwork.
 
         category: 'MY-C0002' for my pictures, 'MY-C0004' for favourites, 'MY-C0008' for store
+
+        By default a failed read (no answer, unparsable reply) returns [] like an
+        empty library. With strict=True it returns None instead, so a caller
+        that acts on the list (deleting local files) can tell "the TV has no
+        artwork" from "the TV did not answer".
         """
+        failed: list | None = None if strict else []
         data = await self._send_art_request(
             {"request": "get_content_list", "category": category},
             timeout=15,
         )
         if not data:
-            return []
+            return failed
 
         content_list = data.get("content_list", "[]")
         if isinstance(content_list, str):
             try:
                 content_list = json.loads(content_list)
             except json.JSONDecodeError:
-                return []
+                return failed
 
         if category:
             return [v for v in content_list if v.get("category_id") == category]

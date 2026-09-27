@@ -5030,16 +5030,34 @@ class SamsungTVDevice(SamsungTVEntity, MediaPlayerEntity):
             # Get artwork list based on filters
             if favorites_only:
                 # Get favorites (category 4 = MY-C0004)
-                artwork_list = await self._art_api.available("MY-C0004")
+                artwork_list = await self._art_api.available("MY-C0004", strict=True)
             elif personal_only:
                 # Get personal photos (category 2 = MY-C0002)
-                artwork_list = await self._art_api.available("MY-C0002")
+                artwork_list = await self._art_api.available("MY-C0002", strict=True)
             elif category_id:
                 # Get specific category
-                artwork_list = await self._art_api.available(category_id)
+                artwork_list = await self._art_api.available(category_id, strict=True)
             else:
                 # Get all artworks
-                artwork_list = await self._art_api.available()
+                artwork_list = await self._art_api.available(strict=True)
+
+            # The TV did not answer (asleep, art channel recovering): we know
+            # nothing about its library, so delete nothing. Treating this as
+            # an empty list wiped all 16 personal thumbnails of a sleeping
+            # Frame from an automation run 20 min after an HA restart.
+            if artwork_list is None:
+                self._log.warning(
+                    "art_get_thumbnails_batch: the TV did not return its artwork "
+                    "list (asleep or art channel unavailable); nothing downloaded "
+                    "or deleted"
+                )
+                result = {
+                    "service": "art_get_thumbnails_batch",
+                    "success": False,
+                    "error": "TV did not return its artwork list; nothing deleted",
+                }
+                self._store_art_result(result)
+                return result
 
             # Build set of valid content IDs (empty set if the TV reports no
             # artworks at all for this filter, e.g. after a factory reset wipes
