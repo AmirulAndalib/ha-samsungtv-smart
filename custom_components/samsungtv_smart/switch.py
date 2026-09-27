@@ -256,7 +256,7 @@ class FrameArtModeSwitch(SwitchEntity):
         """True when art mode may use IP Control at all (default: off)."""
         return self._entry.options.get(CONF_IP_CONTROL_ART_MODE, False)
 
-    async def _set_artmode(self, turn_on: bool):
+    async def _set_artmode(self, turn_on: bool, after_power_on: bool = False):
         """Set Art Mode via IP Control (primary), WebSocket as fallback.
 
         On a healthy Frame, IP Control ``artModeControl`` reliably flips the
@@ -290,12 +290,22 @@ class FrameArtModeSwitch(SwitchEntity):
         # writing again is exactly the loop we are guarding against.
         panel = await self._panel_shows_art()
         if panel is turn_on:
-            self._log.warning(
-                "Art Mode %s requested for %s but the panel already shows it — "
-                "the art-mode reading was stale; not writing",
-                "ON" if turn_on else "OFF",
-                self._device_name,
-            )
+            if after_power_on and turn_on:
+                # We just woke the TV ourselves and a Frame resumes Art Mode on
+                # wake: nothing was stale, the power-on did the job. Logging this
+                # as a WARNING produced one misleading line per wake (every 20
+                # min on a Frame with a motion timer, ~72/day).
+                self._log.info(
+                    "%s woke directly into Art Mode; nothing to write",
+                    self._device_name,
+                )
+            else:
+                self._log.warning(
+                    "Art Mode %s requested for %s but the panel already shows "
+                    "it — the art-mode reading was stale; not writing",
+                    "ON" if turn_on else "OFF",
+                    self._device_name,
+                )
             guard.record_verified(turn_on)
             return True
 
@@ -576,7 +586,7 @@ class FrameArtModeSwitch(SwitchEntity):
                         max_retries,
                         self._device_name,
                     )
-                    result = await self._set_artmode(True)
+                    result = await self._set_artmode(True, after_power_on=tv_was_off)
                     if result:
                         # Set state immediately for responsive UI and hold it
                         # against the lagging media_player reading.
