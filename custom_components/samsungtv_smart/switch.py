@@ -358,9 +358,21 @@ class FrameArtModeSwitch(SwitchEntity):
 
         result = await self._art_api.set_artmode(turn_on)
         if result:
-            # The WebSocket path has no panel read-back here; the caller's
-            # get_artmode() check verifies it and clears this.
-            guard.record_unverified(turn_on)
+            # Read the channel's own art_mode back instead of recording every
+            # successful write as unverified. set_artmode returns True when the
+            # TV answered the request or broadcast art_mode_changed, and
+            # self.art_mode is what that broadcast sets — so on a TV without IP
+            # Control (no panel getter) it is the read-back this path lacked.
+            #
+            # Recording an unconditional record_unverified() here, with no
+            # caller clearing it on the success path, meant every confirmed
+            # write looked like one that "did not take": an ON, an OFF, then an
+            # ON again within 60 s was refused by the cooldown, on any TV
+            # without IP Control (#290).
+            if self._art_api.art_mode is turn_on:
+                guard.record_verified(turn_on)
+            else:
+                guard.record_unverified(turn_on)
         return result
 
     async def _panel_shows_art(self) -> bool | None:
