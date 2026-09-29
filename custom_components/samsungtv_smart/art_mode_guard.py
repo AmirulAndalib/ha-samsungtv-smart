@@ -53,8 +53,9 @@ class ArtModeWriteSuppressed(Exception):
         self.since = since
         intent = "on" if turn_on else "off"
         super().__init__(
-            f"art mode '{intent}' was already written {since:.0f}s ago and did not "
-            f"take; not writing it again within {ART_MODE_WRITE_COOLDOWN:.0f}s"
+            f"art mode '{intent}' was already written {since:.0f}s ago without "
+            f"being confirmed; not writing it again within "
+            f"{ART_MODE_WRITE_COOLDOWN:.0f}s"
         )
 
 
@@ -90,6 +91,22 @@ class ArtModeWriteGuard:
     def record_verified(self, turn_on: bool) -> None:
         """A write was read back as applied: nothing to hold against it."""
         self._unverified.pop(turn_on, None)
+
+    def record_confirmed(self, turn_on: bool) -> None:
+        """The TV was read back in this state AFTER a write of it.
+
+        Clears both records: the write took, and an earlier unverified write
+        of the other intent is not being repeated — the TV has moved since.
+        Without this, a write that could not be confirmed (e.g. a redundant OFF
+        to a TV already off) blocked a genuine OFF for the rest of the cooldown
+        even after a confirmed ON in between (#290).
+
+        Only for a read-back after a write. A pre-write "the panel already
+        shows it" check must use record_verified: clearing the other intent
+        there would let a no-op ON wipe the record of a failing OFF.
+        """
+        self._unverified.pop(turn_on, None)
+        self._unverified.pop(not turn_on, None)
 
     def pending(self, turn_on: bool) -> float | None:
         """Seconds since the last unverified write of this intent, if any."""

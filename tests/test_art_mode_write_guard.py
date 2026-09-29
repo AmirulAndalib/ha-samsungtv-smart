@@ -133,8 +133,13 @@ class PanelTruthTest(unittest.TestCase):
             SWITCH, "    async def _set_artmode", "    async def _panel_shows_art"
         )
         write = block.index("async_set_art_mode_on()")
-        self.assertIn("after = await self._panel_shows_art()", block[write:])
-        self.assertIn("guard.record_verified(turn_on)", block[write:])
+        # Read back through the polling helper, which reads the panel itself.
+        self.assertIn("after = await self._panel_read_back(turn_on)", block[write:])
+        helper = block[block.index("    async def _panel_read_back") :]
+        self.assertIn("await self._panel_shows_art()", helper)
+        # A read-back after a write confirms it (and clears the other intent);
+        # until then the write stands as provisional.
+        self.assertIn("guard.record_confirmed(turn_on)", block[write:])
         self.assertIn("guard.record_unverified(turn_on)", block[write:])
 
     def test_media_player_checks_the_panel_before_any_write_or_toggle(self):

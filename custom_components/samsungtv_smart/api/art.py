@@ -204,6 +204,13 @@ class SamsungTVAsyncArt:
 
         # State
         self.art_mode: bool | None = None
+        # art_mode_changed broadcasts, numbered as they arrive, and the number
+        # of the latest one per state. The switch's write guard confirms a
+        # write by a broadcast of the requested state that arrived AFTER the
+        # write, rather than by the cached art_mode, which may already have
+        # held that value before the write (#290).
+        self.art_mode_broadcast_count = 0
+        self.art_mode_broadcast_at: dict[bool, int] = {}
 
         # Async handling
         self._pending_requests: dict[str, asyncio.Future] = {}
@@ -867,6 +874,8 @@ class SamsungTVAsyncArt:
             self.art_mode = data.get("value") == "on"
         elif sub_event == "art_mode_changed":
             self.art_mode = data.get("status") == "on"
+            self.art_mode_broadcast_count += 1
+            self.art_mode_broadcast_at[self.art_mode] = self.art_mode_broadcast_count
             self._fire_art_event()
             for future in self._art_mode_broadcast_waiters:
                 if not future.done():
@@ -1741,6 +1750,13 @@ class SamsungTVAsyncArt:
             self.art_mode = value == "on"
             return value
         return None
+
+    def art_mode_broadcast_since(self, mark: int, turn_on: bool) -> bool:
+        """Whether an art_mode_changed broadcast to this state arrived after mark.
+
+        ``mark`` is ``art_mode_broadcast_count`` read before a write.
+        """
+        return self.art_mode_broadcast_at.get(turn_on, 0) > mark
 
     async def set_artmode(self, mode: str | bool) -> bool:
         """Set art mode on or off."""
