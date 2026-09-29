@@ -25,7 +25,7 @@ switch.py and art.py need Home Assistant / aiohttp to import. The tests run the
 real _set_artmode, async_turn_on and async_turn_off, extracted from switch.py.
 They drive them against the real set_artmode and _process_event from
 api/art.py over a scripted transport replaying the #290 log's event order, and
-against the real ArtModeWriteGuard. Time is compressed 100x.
+against the real ArtModeWriteGuard. Time is compressed 25x.
 """
 
 import ast
@@ -34,13 +34,14 @@ import importlib.util
 import json
 import logging
 from pathlib import Path
+import re
 import sys
 import types
 import unittest
 
 ROOT = Path(__file__).parents[1] / "custom_components" / "samsungtv_smart"
 SWITCH_PATH = ROOT / "switch.py"
-SCALE = 100.0  # virtual seconds per real second
+SCALE = 25.0  # virtual seconds per real second (margins stay >= 20 ms real)
 
 
 def _load(name, path):
@@ -111,6 +112,15 @@ class _IPError(Exception):
     pass
 
 
+def _constants(*names):
+    """Read module-level float constants from switch.py, so the tests follow them."""
+    source = SWITCH_PATH.read_text()
+    return {
+        name: float(re.search(rf"^{name} = ([0-9.]+)$", source, re.M).group(1))
+        for name in names
+    }
+
+
 def _switch_methods():
     tree = ast.parse(SWITCH_PATH.read_text())
     cls = next(
@@ -122,6 +132,8 @@ def _switch_methods():
     wanted = {
         "_set_artmode",
         "_panel_shows_art",
+        "_panel_read_back",
+        "_confirm_by_broadcast",
         "async_turn_on",
         "async_turn_off",
         "_verify_art_mode_broadcast",
@@ -133,7 +145,9 @@ def _switch_methods():
         "ArtModeWriteSuppressed": guard_mod.ArtModeWriteSuppressed,
         "SamsungIPControlError": _IPError,
         "Any": object,
-        "ART_MODE_BROADCAST_VERIFY_WINDOW": 8.0,
+        **_constants(
+            "ART_MODE_BROADCAST_VERIFY_WINDOW", "ART_MODE_PANEL_READ_BACK_WINDOW"
+        ),
     }
     for node in cls.body:
         if getattr(node, "name", "") in wanted:
@@ -202,6 +216,8 @@ class _ArtChannel(art.SamsungTVAsyncArt):
 
     def __init__(self, art_mode, ws_get=None):
         self.art_mode = art_mode
+        self.art_mode_broadcast_count = 0
+        self.art_mode_broadcast_at = {}
         self._art_mode_broadcast_waiters = []
         self._pending_requests = {}
         self._log = logging.getLogger(__name__)
@@ -261,7 +277,14 @@ class _Switch:
             data={"samsungtv_smart": {"e": {}}},
             async_create_background_task=self._background,
         )
-        self._entry = types.SimpleNamespace(entry_id="e", options={}, data={})
+        self._entry = types.SimpleNamespace(
+            entry_id="e",
+            options={},
+            data={},
+            async_create_background_task=lambda hass, coro, name: self._background(
+                coro, name
+            ),
+        )
         self._log = _Log()
         self._device_name = "Frame"
         self._pending_art_on = False
@@ -395,6 +418,43 @@ class NoIpControlTest(_Base):
         self.assertTrue(all(t.done() for t in sw.tasks))
         self.assertIsNotNone(sw.guard.pending(False))
 
+    async def test_a_redundant_off_does_not_block_a_later_genuine_off(self):
+        # Art already off; SmartThings lag shows the switch on, so OFF is
+        # pressed anyway and the TV only replies. Then a confirmed ON, then a
+        # genuine OFF within 60 s. The redundant OFF's record must not refuse
+        # it and leave the TV in Art Mode (#290 by another route).
+        sw = _Switch(_ArtChannel(art_mode=False))
+        silent_off = [("reply", "off", 0.1)]
+        await self.toggles(
+            sw, [(0, False, [silent_off]), (10, True, [ON]), (25, False, [OFF])]
+        )
+        self.assertEqual(sw.refused(), [])
+        self.assertEqual(sw._art_api.writes, 3)
+
+    async def test_a_redundant_write_the_tv_broadcasts_is_confirmed(self):
+        # Same redundant OFF, but the TV broadcasts 'off' for it: confirmed by
+        # the event even though the cache already held False.
+        sw = _Switch(_ArtChannel(art_mode=False))
+        await self.toggles(
+            sw, [(0, False, [[("reply", "off", 0.1), ("broadcast", "off", 0.6)]])]
+        )
+        await self.wait(1)
+        self.assertIsNone(sw.guard.pending(False))
+
+    async def test_a_broadcast_between_two_polls_is_not_missed(self):
+        # off then on again 0.1 s apart, both after the write returned: the
+        # verifier looks the broadcast up by number, not by the current value.
+        sw = _Switch(_ArtChannel(art_mode=True))
+        flicker = [
+            ("reply", "off", 0.05),
+            ("broadcast", "off", 1.0),
+            ("broadcast", "on", 1.1),
+        ]
+        sw._art_api.scripts = [flicker]
+        self.assertTrue(await sw._set_artmode(False))
+        await self.wait(2)
+        self.assertIsNone(sw.guard.pending(False))
+
     async def test_a_write_the_tv_never_confirms_is_still_recorded(self):
         # Reply, no broadcast: the loop the guard exists to stop (#248).
         sw = _Switch(_ArtChannel(art_mode=True))
@@ -466,13 +526,46 @@ class PairedOptionOffTest(_Base):
         await self.toggles(sw, runs)
         self.assertEqual(sw._art_api.writes, 1)
 
+    async def test_a_panel_that_catches_up_is_logged_as_a_late_confirmation(self):
+        # Panel slower than the whole read-back window: the retry's pre-check
+        # finds it and says so, instead of calling the reading stale.
+        tv = _Tv(shows_art=False, moves=True, lag=5.5)
+        sw = _Switch(_ArtChannel(art_mode=False), tv)
+        await self.toggles(sw, [(0, True, [[("reply", "on", 0.3)]] * 3)])
+        self.assertEqual(sw._art_api.writes, 1)
+        self.assertIsNone(sw.guard.pending(True))
+        messages = [m for level, m in sw._log.lines]
+        self.assertTrue(any("confirmed on re-check" in m for m in messages))
+        self.assertFalse(any("reading was stale" in m for m in messages))
+
+    async def test_an_unreadable_panel_falls_back_to_the_broadcast(self):
+        class _Unreadable(_IpClient):
+            async def async_panel_shows_art(self):
+                return None
+
+        sw = _Switch(_ArtChannel(art_mode=True))
+        sw._ip = _Unreadable(None)
+        sw._art_api.scripts = [list(OFF)]
+        self.assertTrue(await sw._set_artmode(False))
+        await self.wait(5)
+        self.assertIsNone(sw.guard.pending(False))
+
     async def test_the_record_stands_if_the_read_back_is_cut_short(self):
+        # The caller's per-attempt timeout fires while the panel read-back is
+        # still waiting: the record set before it must stand.
         tv = _Tv(shows_art=False, moves=True, lag=1.0)
         sw = _Switch(_ArtChannel(art_mode=False), tv)
-        sw._art_api.scripts = [[("reply", "on", 0.3)]]
+        sw._art_api.scripts = [[("reply", "on", 0.05)]]
+        hang = asyncio.get_running_loop().create_future()
+
+        async def never(*args, **kwargs):
+            await hang
+
+        sw.__dict__["_panel_read_back"] = never
         with self.assertRaises(asyncio.TimeoutError):
-            async with asyncio.timeout(1.0 / SCALE):  # inside the 2 s wait
+            async with asyncio.timeout(2.0 / SCALE):
                 await sw._set_artmode(True)
+        self.assertEqual(sw._art_api.writes, 1)
         self.assertIsNotNone(sw.guard.pending(True))
 
 
