@@ -53,8 +53,9 @@ class ArtModeWriteSuppressed(Exception):
         self.since = since
         intent = "on" if turn_on else "off"
         super().__init__(
-            f"art mode '{intent}' was already written {since:.0f}s ago and did not "
-            f"take; not writing it again within {ART_MODE_WRITE_COOLDOWN:.0f}s"
+            f"art mode '{intent}' was already written {since:.0f}s ago without "
+            f"being confirmed; not writing it again within "
+            f"{ART_MODE_WRITE_COOLDOWN:.0f}s"
         )
 
 

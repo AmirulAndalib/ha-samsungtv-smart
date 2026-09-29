@@ -55,6 +55,13 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
+# How long a write over the art channel, on a TV with no panel getter (no IP
+# Control), waits in the background for the TV's art_mode_changed broadcast
+# before its provisional "did not take" record is left to stand. The #290
+# Frame broadcast its OFF 4.35 s after replying.
+ART_MODE_BROADCAST_VERIFY_WINDOW = 8.0
+
+
 class _DeviceLoggerAdapter(logging.LoggerAdapter):
     """Prefix every log line with the TV's host so multi-TV logs can be told apart."""
 
@@ -265,8 +272,9 @@ class FrameArtModeSwitch(SwitchEntity):
         art channel, whose ``set_artmode`` returns None/False or "times out but
         a broadcast confirms" — a false success that doesn't move the panel. On
         any IP Control failure (not paired, transport, auth) we fall back to the
-        WebSocket so behaviour is never worse than before. The caller verifies
-        the resulting state afterwards.
+        WebSocket so behaviour is never worse than before. Each branch reads
+        the result back itself and reports it to the write guard; the callers
+        do not.
 
         ``CONF_IP_CONTROL_ART_MODE`` gates this path, reads AND writes. It
         used to gate only the ``artModeControl`` getter, on the reasoning that
@@ -356,24 +364,79 @@ class FrameArtModeSwitch(SwitchEntity):
                 )
                 return False
 
+        before = self._art_api.art_mode
         result = await self._art_api.set_artmode(turn_on)
-        if result:
-            # Read the channel's own art_mode back instead of recording every
-            # successful write as unverified. set_artmode returns True when the
-            # TV answered the request or broadcast art_mode_changed, and
-            # self.art_mode is what that broadcast sets — so on a TV without IP
-            # Control (no panel getter) it is the read-back this path lacked.
-            #
-            # Recording an unconditional record_unverified() here, with no
-            # caller clearing it on the success path, meant every confirmed
-            # write looked like one that "did not take": an ON, an OFF, then an
-            # ON again within 60 s was refused by the cooldown, on any TV
-            # without IP Control (#290).
+        if not result:
+            return result
+        # set_artmode's True is not a read-back. It is also returned on the
+        # TV's set_artmode_status reply, which does not update art_mode (#264),
+        # and whenever the cached art_mode already equals the request, even
+        # after a timeout. Record the write as provisional BEFORE any await: if
+        # the caller's timeout cuts the read-back short, the record stands and
+        # a retry is refused rather than repeated.
+        guard.record_unverified(turn_on)
+
+        if self._get_ip_control() is not None:
+            # IP Control is paired, whatever "Enable IP Control Art Mode" says:
+            # read the PANEL back, exactly as the IP Control branch above does.
+            # On these TVs the art channel is not a read-back — it froze for
+            # hours on #248's Frames and reports a spurious 'on' on others
+            # (#273) — and this is the path those fleets take with the option
+            # off.
+            await asyncio.sleep(2)
+            after = await self._panel_shows_art()
+            if after is turn_on:
+                guard.record_verified(turn_on)
+                return True
+            if after is None:
+                self._log.debug(
+                    "Art Mode %s for %s accepted over the art channel but the "
+                    "panel could not be read back",
+                    turn_on,
+                    self._device_name,
+                )
+                return True
+            self._log.warning(
+                "Art Mode %s for %s was accepted over the art channel but the "
+                "panel did not change — not retrying within the cooldown",
+                "ON" if turn_on else "OFF",
+                self._device_name,
+            )
+            return False
+
+        # No panel getter (#290: no IP Control). The only read-back is the
+        # TV's own art_mode_changed broadcast, and only one that moves the
+        # channel TO the requested state after this write counts: a cache that
+        # already held it proves nothing. It can land before set_artmode
+        # returns (the #290 Frame's ON) or seconds after the reply (its OFF:
+        # 0.75 s and 4.35 s in the log). Verify it in the background, so the
+        # switch still flips as soon as the TV has answered.
+        if before is not turn_on:
             if self._art_api.art_mode is turn_on:
                 guard.record_verified(turn_on)
             else:
-                guard.record_unverified(turn_on)
+                self._hass.async_create_background_task(
+                    self._verify_art_mode_broadcast(turn_on),
+                    f"samsungtv_smart art mode read-back {self._device_name}",
+                )
         return result
+
+    async def _verify_art_mode_broadcast(self, turn_on: bool) -> None:
+        """Clear the write guard once the TV broadcasts the requested state.
+
+        Passive: sends nothing on the art channel. If no matching broadcast
+        arrives within the window the provisional record stands, as for any
+        write that could not be read back.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + ART_MODE_BROADCAST_VERIFY_WINDOW
+        while loop.time() < deadline:
+            if self._art_api.art_mode is turn_on:
+                guard_for(
+                    self._hass.data[DOMAIN][self._entry.entry_id]
+                ).record_verified(turn_on)
+                return
+            await asyncio.sleep(0.25)
 
     async def _panel_shows_art(self) -> bool | None:
         """getTVStates.pictureMode == "Ambient", or None when unreadable."""
@@ -627,17 +690,26 @@ class FrameArtModeSwitch(SwitchEntity):
                             " checking actual state...",
                             attempt + 1,
                         )
+                        guard = guard_for(self._hass.data[DOMAIN][self._entry.entry_id])
                         try:
-                            actual = await self._art_api.get_artmode()
+                            # A pending ON record here means _set_artmode has
+                            # just read the PANEL back and found no art. The
+                            # art channel must not overrule it: it can say "on"
+                            # while an input is on screen (#273), and clearing
+                            # the record would let the next run write again
+                            # (#248). The next attempt's panel check re-reads.
+                            actual = (
+                                None
+                                if guard.pending(True) is not None
+                                else await self._art_api.get_artmode()
+                            )
                             if actual == "on":
                                 self._log.info(
                                     "Art Mode is already ON for %s"
                                     " (confirmed by get_artmode)",
                                     self._device_name,
                                 )
-                                guard_for(
-                                    self._hass.data[DOMAIN][self._entry.entry_id]
-                                ).record_verified(True)
+                                guard.record_verified(True)
                                 self._attr_is_on = True
                                 self._available = True
                                 self.async_write_ha_state()
