@@ -123,6 +123,14 @@ ART_WS_RECOVERY_COOLDOWN = 30.0
 # instead of re-arming into the same failure every cycle (#273).
 ART_WS_RECOVERY_BACKOFF_MAX_DOUBLINGS = 3
 
+# A wedge this soon after the previous one counts as a recurrence, and doubles
+# the recovery cooldown even when the channel answered in between. A channel
+# that answers some requests and times out on others — an art app polled on a
+# TV showing HDMI — otherwise resets the escalation on every cycle and loops at
+# the base cooldown indefinitely (measured: 10-11 wedges in ~1 h, every
+# 4-8 min, with no backing-off line, on two consecutive mornings; #273).
+ART_WS_WEDGE_RECURRENCE_WINDOW = 900.0
+
 # Samsung firmware can leave a WebSocket transport half-open indefinitely.
 # Integration unload (and therefore Home Assistant shutdown/restart) must not
 # wait forever for aiohttp's close handshake.
@@ -262,6 +270,12 @@ class SamsungTVAsyncArt:
         # ms.channel.ready alone removed all spacing and took the wedge count
         # from 5 to 94 in a comparable window).
         self._unproductive_cycles = 0
+        # Wedges that keep recurring within ART_WS_WEDGE_RECURRENCE_WINDOW,
+        # whether or not the channel answered in between, and when the last one
+        # was. Escalates the cooldown on their own, so a channel that is
+        # partly answering cannot loop at the base cooldown forever (#273).
+        self._recurring_wedges = 0
+        self._last_wedge_at: float | None = None
         # True once the current port has actually answered a request. The art
         # port is a property of the TV/firmware, so it is discovered at connect
         # time (open() falls back to the alternate port when the connection
@@ -351,6 +365,22 @@ class SamsungTVAsyncArt:
         never on a transport/connection failure.
         """
         self._capability_callback = func
+
+    def _capability_probe_is_trustworthy(self) -> bool:
+        """Whether silence to a capability probe really means "unsupported".
+
+        A capability is latched permanently (persisted to entry.data, cleared
+        only by a reconfigure), so it must not be decided by a channel that is
+        merely busy. A 65" LS03A latched BOTH art get-capabilities to false
+        from one 1 s timeout 12 s after a wedge-forced reconnect while its TV
+        was waking; its same-model sibling reads true for both (#273).
+
+        Trust the silence only on a channel that has answered something since
+        it connected and is not in post-wedge recovery.
+        """
+        if not self._got_response_since_connect:
+            return False
+        return self._request_cooldown_until <= time.monotonic()
 
     def _learn_capability(self, flag_name: str, value: bool) -> None:
         """Notify the caller that a capability has been determined."""
@@ -1035,7 +1065,24 @@ class SamsungTVAsyncArt:
             self._unproductive_cycles = min(
                 self._unproductive_cycles + 1, ART_WS_RECOVERY_BACKOFF_MAX_DOUBLINGS
             )
-        cooldown = ART_WS_RECOVERY_COOLDOWN * (2**self._unproductive_cycles)
+        # Independently of that: a wedge soon after the last one is a recurrence.
+        # The reset above is right for a one-off fault on a working channel, but
+        # a channel that answers some requests and times out on the rest resets
+        # it on every cycle, so the spacing never grows. Count recurrences too
+        # and take whichever escalation is larger; a quiet window clears it.
+        now = time.monotonic()
+        if (
+            self._last_wedge_at is not None
+            and now - self._last_wedge_at <= ART_WS_WEDGE_RECURRENCE_WINDOW
+        ):
+            self._recurring_wedges = min(
+                self._recurring_wedges + 1, ART_WS_RECOVERY_BACKOFF_MAX_DOUBLINGS
+            )
+        else:
+            self._recurring_wedges = 0
+        self._last_wedge_at = now
+        doublings = max(self._unproductive_cycles, self._recurring_wedges)
+        cooldown = ART_WS_RECOVERY_COOLDOWN * (2**doublings)
         self._request_cooldown_until = max(
             self._request_cooldown_until,
             time.monotonic() + cooldown,
@@ -1073,6 +1120,18 @@ class SamsungTVAsyncArt:
                 "Art API: port %d unresponsive (the TV or network is likely "
                 "away); keeping the port and backing off for %.0fs",
                 self._port,
+                cooldown,
+            )
+        elif self._recurring_wedges:
+            # The channel answers some requests and times out on the others, so
+            # neither branch above applies and nothing used to be said at all.
+            # Usually the art app being polled on a TV that is on, but showing
+            # an input rather than art.
+            self._log.warning(
+                "Art API: the channel answers but art requests keep timing out "
+                "(%d wedges in a row; the TV may be on a non-art input); "
+                "backing off for %.0fs",
+                self._recurring_wedges + 1,
                 cooldown,
             )
         # Close from a task: _ws.close() makes the receive loop's `async for`
@@ -1977,7 +2036,11 @@ class SamsungTVAsyncArt:
                     self._supports_get_brightness = True
                     self._learn_capability("brightness", True)
                 return data
-            if self._supports_get_brightness is None and self._connected:
+            if (
+                self._supports_get_brightness is None
+                and self._connected
+                and self._capability_probe_is_trustworthy()
+            ):
                 # Connected but silent to this specific request => genuine
                 # "unsupported" signal. (A falsy result while NOT connected is a
                 # transport issue, not a capability answer — stay unknown.)
@@ -2023,7 +2086,11 @@ class SamsungTVAsyncArt:
                     self._supports_get_color_temperature = True
                     self._learn_capability("color_temperature", True)
                 return data
-            if self._supports_get_color_temperature is None and self._connected:
+            if (
+                self._supports_get_color_temperature is None
+                and self._connected
+                and self._capability_probe_is_trustworthy()
+            ):
                 self._log.info(
                     "Art API: TV did not respond to get_color_temperature within "
                     "1 s; falling back to get_artmode_settings for future polls"

@@ -73,7 +73,13 @@ class RecoveryBackoffTest(unittest.TestCase):
         self.assertIn("if self._got_response_since_connect:", block)
         self.assertIn("self._unproductive_cycles = 0", block)
         self.assertIn("self._unproductive_cycles + 1", block)
-        self.assertIn("2**self._unproductive_cycles", block)
+        # The exponent is now the larger of the never-answered cycles and the
+        # recurring-wedge count, so a channel that answers some requests and
+        # times out on the rest also escalates (#273 follow-up).
+        self.assertIn(
+            "doublings = max(self._unproductive_cycles, self._recurring_wedges)", block
+        )
+        self.assertIn("2**doublings", block)
 
     def test_ready_only_lifts_the_cooldown_when_nothing_is_outstanding(self):
         block = _block(ART, "    async def _connect_once(", "\n    async def close")
